@@ -230,7 +230,8 @@ class SettingsWindow(QtWidgets.QDialog):
             return
         n = len(plugins.enabled_tools(self.s))
         message("Saved", f"Settings saved. {n} tools in the menu"
-                + (f" ({', '.join(written)})." if written else ".")
+                + (":\n" + "\n".join(f"  {n}: {menus.install_notes.get(n, 'installed')}" for n in written)
+                   if written else ".")
                 + "\nNautilus may need a restart (nautilus -q) to show changes.", self)
         self.accept()
 

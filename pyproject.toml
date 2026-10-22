@@ -21,6 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+# Skull stripping without containers. Installs PyTorch; for a much smaller CPU-only build run
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu   first.
+synthstrip = ["nipreps-synthstrip>=0.0.1", "torch>=1.10.2"]
 
 [project.scripts]
 niice = "niice.cli:main"

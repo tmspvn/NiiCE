@@ -442,7 +442,8 @@ class SkullstripDialog(BatchDialog):
         pref = self.settings.get("synthstrip_backend", "auto")
         self.backend, self.exe = synthstrip.pick_backend(pref)
         if self.backend:
-            what = {"native": "mri_synthstrip (FreeSurfer)",
+            what = {"python": "nipreps-synthstrip (Python + PyTorch, no container)",
+                    "native": "mri_synthstrip (FreeSurfer)",
                     "docker": f"Docker image {self.settings.get('synthstrip_image')}",
                     "podman": f"Podman image {self.settings.get('synthstrip_image')}",
                     "apptainer": "Apptainer/Singularity"}[self.backend]
@@ -455,20 +456,54 @@ class SkullstripDialog(BatchDialog):
         self.mask = QtWidgets.QCheckBox("Also save the brain mask (_brainmask)")
         self.mask.setChecked(True)
         self.nocsf = QtWidgets.QCheckBox("Exclude CSF from the brain border (--no-csf)")
-        self.border = dspin(1.0, -10, 10, 1, 0.5)
+        python = self.backend == "python"
+        # nipreps-synthstrip takes whole millimetres for the border
+        self.border = dspin(1.0, -10, 10, 0 if python else 1, 1.0 if python else 0.5)
         form.addRow(self.mask)
         form.addRow(self.nocsf)
         form.addRow("Mask border (mm)", self.border)
+        self.threads = QtWidgets.QSpinBox()
+        self.threads.setRange(1, max(1, os.cpu_count() or 1))
+        self.threads.setValue(min(int(self.settings.get("ants_threads", 3)), self.threads.maximum()))
+        if python:
+            form.addRow("CPU threads", self.threads)
+            self.weights_hint = hint("")
+            form.addRow("", self.weights_hint)
+            self.nocsf.toggled.connect(self._weights_status)
+            self._weights_status()
         self.add_suffix(form, "_brain")
         lay.addLayout(form)
         if self.backend in ("docker", "podman"):
             lay.addWidget(hint("The first run downloads the image (~1-2 GB) if it is not present yet."))
         self.pkexec = bool(self.settings.get("docker_pkexec"))
 
+    def _weights_status(self, *_):
+        name = synthstrip.WEIGHTS[self.nocsf.isChecked()][0]
+        found = synthstrip.find_weights(self.nocsf.isChecked())
+        self.weights_hint.setText(f"Model weights: {found}" if found else
+                                  f"Model weights {name} (~{synthstrip.WEIGHTS_MB} MB) will be downloaded "
+                                  "once from surfer.nmr.mgh.harvard.edu (MIT / CC BY 4.0 licence).")
+
     def validate(self):
         if not self.backend:
             return "SynthStrip not found (see message above)"
+        self._download = False
+        if self.backend == "python" and not synthstrip.find_weights(self.nocsf.isChecked()):
+            name = synthstrip.WEIGHTS[self.nocsf.isChecked()][0]
+            if not ask("Download model weights?",
+                       f"SynthStrip needs its trained model ({name}, about {synthstrip.WEIGHTS_MB} MB).\n"
+                       f"Download it now from the official SynthStrip website into\n{synthstrip.weights_dir()} ?",
+                       self):
+                return "The model weights are needed to run SynthStrip"
+            self._download = True
         return super().validate()
+
+    def task(self, report):
+        if getattr(self, "_download", False):
+            path = synthstrip.download_weights(self.nocsf.isChecked(), report.progress,
+                                               lambda: report.cancelled)
+            report.log(f"Downloaded and verified {path}")
+        return super().task(report)
 
     def process(self, path, report):
         out = self.out_name(path, self.suffix_edit.text())
@@ -478,7 +513,7 @@ class SkullstripDialog(BatchDialog):
             cmd = synthstrip.build_command(self.backend, self.exe, path, out, mask,
                                            no_csf=self.nocsf.isChecked(), border=self.border.value(),
                                            image=self.settings.get("synthstrip_image", synthstrip.DEFAULT_IMAGE),
-                                           pkexec=self.pkexec)
+                                           pkexec=self.pkexec, threads=self.threads.value())
             report.log("$ " + " ".join(cmd))
             lines = []
 

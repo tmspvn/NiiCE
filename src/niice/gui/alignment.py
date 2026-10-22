@@ -209,11 +209,13 @@ class AlignmentWindow(QtWidgets.QDialog):
             self.banner.set("info", "Reference and compared image are the same file.")
             return
         r = space.compare(io.load(ref), io.load(mov))
-        lines = [html.escape(i) for i in r.issues]
+        details = [html.escape(r.summary)] + [html.escape(i) for i in r.issues]
         if not r.same_grid:
-            lines.append(f"Field-of-view overlap: {100 * r.overlap:.0f}% of the smaller image")
-        title = {"same": "", "grid": "", "warning": "Not the same affine space. "}[r.level]
-        self.banner.set(r.level, title + html.escape(r.summary), lines)
+            details.append(f"Field-of-view overlap: {100 * r.overlap:.0f}% of the smaller image")
+        title = {"same": "Same voxel grid", "grid": "Same world space, different voxel grid",
+                 "warning": "Not in the same affine space"}[r.level]
+        self.banner.set(r.level, title)  # just the verdict; details on hover
+        self.banner.setToolTip("<br>".join(details))
 
     def _failed(self, msg, tb):
         for v in self.views:

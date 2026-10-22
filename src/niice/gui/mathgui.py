@@ -1,4 +1,4 @@
-"""Math: numpy expressions or multi-line Python code between images."""
+"""Math: Python/numpy code between images (one line or many)."""
 from __future__ import annotations
 
 import os
@@ -17,6 +17,21 @@ DTYPES = {"automatic": None, "float32": np.float32, "int16": np.int16, "int32": 
           "uint8 (masks)": np.uint8}
 
 
+AVAILABLE_TEXT = """\
+a, b, c ...      the selected images, as numpy arrays (float32)
+np               numpy
+nib              nibabel   (e.g. nib.load(path), nib.Nifti1Image(data, affine))
+ndi              scipy.ndimage
+ref_img          the reference image, as a nibabel image (ref_img.affine, ref_img.header)
+result = ...     saved as 'Save as' (or just end with an expression)
+save(arr, 'name')   writes an extra image on the reference grid
+print(...)       shows in the log
+import ...       works as usual (e.g. from scipy import stats)"""
+
+# Code block colours: always a dark panel so it reads as code in light and dark desktop themes
+CODE_BG, CODE_FG, GUTTER_BG, GUTTER_FG = "#1e2029", "#e6e6e6", "#272a35", "#7f8596"
+
+
 class CodeEdit(QtWidgets.QPlainTextEdit):
     """Plain-text code editor: line numbers, Tab = 4 spaces, auto-indent, Ctrl+Enter = run."""
     run_requested = QtCore.Signal()
@@ -27,6 +42,12 @@ class CodeEdit(QtWidgets.QPlainTextEdit):
         font.setPointSize(font.pointSize() + 1)
         self.setFont(font)
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.setStyleSheet(f"QPlainTextEdit {{ background: {CODE_BG}; color: {CODE_FG}; "
+                           "selection-background-color: #3d5a80; selection-color: white; "
+                           "border: 1px solid #3a3f4f; border-radius: 6px; }")
+        pal = self.palette()
+        pal.setColor(QtGui.QPalette.PlaceholderText, QtGui.QColor(GUTTER_FG))
+        self.setPalette(pal)
         self.setTabStopDistance(4 * self.fontMetrics().horizontalAdvance(" "))
         self.gutter = QtWidgets.QWidget(self)
         self.gutter.paintEvent = self._paint_gutter
@@ -53,8 +74,8 @@ class CodeEdit(QtWidgets.QPlainTextEdit):
 
     def _paint_gutter(self, ev):
         p = QtGui.QPainter(self.gutter)
-        p.fillRect(ev.rect(), self.palette().alternateBase())
-        p.setPen(self.palette().color(QtGui.QPalette.PlaceholderText))
+        p.fillRect(ev.rect(), QtGui.QColor(GUTTER_BG))
+        p.setPen(QtGui.QColor(GUTTER_FG))
         block = self.firstVisibleBlock()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         h = self.fontMetrics().height()
@@ -94,9 +115,8 @@ class CodeEdit(QtWidgets.QPlainTextEdit):
 
 class MathDialog(ToolDialog):
     title = "Math"
-    subtitle = ("Each image is a letter: a, b, c ... Write a one-line numpy expression, or switch to "
-                "Code for several lines of Python. The result is saved on the voxel grid of the "
-                "reference image.")
+    subtitle = ("Each image is a letter: a, b, c ... Write Python below (one line or many); the "
+                "result is saved on the voxel grid of the reference image.")
     run_label = "Compute"
 
     def build(self, lay):
@@ -104,68 +124,37 @@ class MathDialog(ToolDialog):
         lay.addWidget(box)
         self.flist.changed.connect(self._check)
 
-        self.tabs = QtWidgets.QTabWidget()
-        # --- one-line expression
-        etab = QtWidgets.QWidget()
-        el = QtWidgets.QVBoxLayout(etab)
-        self.expr = QtWidgets.QLineEdit()
-        mono = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-        mono.setPointSize(mono.pointSize() + 2)
-        self.expr.setFont(mono)
-        self.expr.setPlaceholderText("e.g.  (a - b) / b * 100")
-        self.expr.textChanged.connect(self._check)
-        self.expr.returnPressed.connect(self.start)
+        self.code = CodeEdit()
+        self.code.setPlaceholderText("# e.g.\n(a - b) / b * 100\n\n# or several lines:\n"
+                                     "mask = b > 0\nresult = a * mask")
+        self.code.setPlainText(self.settings.get("math_code", ""))
+        self.code.setMinimumHeight(220)
+        self.code.textChanged.connect(self._check)
+        self.code.run_requested.connect(self.start)
+        lay.addWidget(self.code, 1)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(hint("Last line or  result = ...  is saved  |  save(array, 'name') writes more "
+                           "files  |  print() goes to the log  |  Ctrl+Enter runs"), 1)
+        more = QtWidgets.QToolButton(text="?")
+        more.setToolTip(AVAILABLE_TEXT)
+        more.clicked.connect(lambda: QtWidgets.QMessageBox.information(self, "Available in your code",
+                                                                       AVAILABLE_TEXT))
+        row.addWidget(more)
         ex = QtWidgets.QToolButton(text="Examples")
         ex.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         menu = QtWidgets.QMenu(ex)
-        for e, desc in mathexpr.EXAMPLES:
+        for e, desc in mathexpr.EXAMPLES:  # one-liners
             act = menu.addAction(f"{e}    -  {desc}")
-            act.triggered.connect(lambda _=False, e=e: self.expr.setText(e))
-        ex.setMenu(menu)
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(self.expr, 1)
-        row.addWidget(ex)
-        el.addLayout(row)
-        helpers = ", ".join(sorted(mathexpr.HELPERS))
-        el.addWidget(hint(
-            "Operators: + - * / ** % and comparisons > < >= <= == !=. Combine masks with & | ~ "
-            "(not 'and'/'or'). Any np.<function> is allowed; these also work without 'np.': "
-            f"{helpers}. Constants: pi, e, nan, inf. A result that is a single number "
-            "(e.g. np.mean(a)) is shown instead of saved."))
-        el.addStretch(1)
-        self.tabs.addTab(etab, "Expression")
-        # --- multi-line code
-        ctab = QtWidgets.QWidget()
-        cl = QtWidgets.QVBoxLayout(ctab)
-        self.code = CodeEdit()
-        self.code.setPlaceholderText("# paste or write Python here, e.g.\nmask = b > 0\nresult = a * mask")
-        self.code.setPlainText(self.settings.get("math_code", ""))
-        self.code.setMinimumHeight(200)
-        self.code.textChanged.connect(self._check)
-        self.code.run_requested.connect(self.start)
-        cl.addWidget(self.code, 1)
-        crow = QtWidgets.QHBoxLayout()
-        cex = QtWidgets.QToolButton(text="Examples")
-        cex.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        cmenu = QtWidgets.QMenu(cex)
-        for title, snippet in mathexpr.CODE_EXAMPLES:
-            act = cmenu.addAction(title)
+            act.triggered.connect(lambda _=False, e=e, d=desc: self.code.setPlainText(f"# {d}\n{e}\n"))
+        menu.addSeparator()
+        for title, snippet in mathexpr.CODE_EXAMPLES:  # several lines
+            act = menu.addAction(title)
             act.triggered.connect(lambda _=False, c=snippet: self.code.setPlainText(c))
-        cex.setMenu(cmenu)
-        crow.addWidget(hint("result = ... is saved  |  save(array, 'name') writes more files  |  "
-                            "print() goes to the log  |  Ctrl+Enter runs"), 1)
-        more = QtWidgets.QToolButton(text="?")
-        more.setToolTip(mathexpr.CODE_HELP)
-        more.clicked.connect(lambda: QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), mathexpr.CODE_HELP, more))
-        crow.addWidget(more)
-        crow.addWidget(cex)
-        cl.addLayout(crow)
-        self.tabs.addTab(ctab, "Code (multi-line)")
-        self.tabs.setCurrentIndex(1 if self.settings.get("math_mode") == "code" else 0)
-        self.tabs.currentChanged.connect(self._tab_changed)
-        lay.addWidget(self.tabs, 1)
-        lay.addWidget(hint("Code runs as normal Python on your computer (the one-line Expression is "
-                           "restricted to array maths): only run code you trust."))
+        ex.setMenu(menu)
+        row.addWidget(ex)
+        lay.addLayout(row)
+        lay.addWidget(hint("The code runs as normal Python on your computer: only run code you trust."))
 
         form = QtWidgets.QFormLayout()
         self.check_label = QtWidgets.QLabel(" ")
@@ -188,14 +177,6 @@ class MathDialog(ToolDialog):
         self._check()
         self.resize(680, 820)
 
-    def code_mode(self) -> bool:
-        return self.tabs.currentIndex() == 1
-
-    def _tab_changed(self, i):
-        if i == 1 and not self.code.toPlainText().strip() and self.expr.text().strip():
-            self.code.setPlainText(f"result = {self.expr.text().strip()}\n")
-        self._check()
-
     def _refill_ref(self):
         cur = self.ref.currentIndex()
         self.ref.blockSignals(True)  # refilling must not re-trigger _check
@@ -208,16 +189,12 @@ class MathDialog(ToolDialog):
     def _check(self):
         if self.ref.count() != self.flist.count():
             self._refill_ref()
-        text = self.code.toPlainText() if self.code_mode() else self.expr.text()
+        text = self.code.toPlainText()
         try:
-            if self.code_mode():
-                _, used, sets_result = mathexpr.prepare_code(text, self.flist.count())
-                msg = "Syntax OK" + (f" - uses {', '.join(used)}" if used else "")
-                if not sets_result:
-                    msg += " - no result set: only save(...) calls will write files"
-            else:
-                used = mathexpr.validate(text, self.flist.count())
-                msg = "OK - uses " + ", ".join(used)
+            _, used, sets_result = mathexpr.prepare_code(text, self.flist.count())
+            msg = "Syntax OK" + (f" - uses {', '.join(used)}" if used else "")
+            if not sets_result:
+                msg += " - no result: only save(...) calls will write files"
             self._check_grids(used)
             self.check_label.setText(msg)
             self.check_label.setStyleSheet("color: #2e7d32;")
@@ -269,38 +246,29 @@ class MathDialog(ToolDialog):
     def start(self):
         if self.panel.running:
             return
-        if self.code_mode():  # remember the code for next time
-            self.settings["math_code"] = self.code.toPlainText()
-        self.settings["math_mode"] = "code" if self.code_mode() else "expression"
-        s = settings.load()
-        s.update({k: self.settings[k] for k in ("math_code", "math_mode") if k in self.settings})
+        s = settings.load()  # remember the code for next time
+        s["math_code"] = self.settings["math_code"] = self.code.toPlainText()
         settings.save(s)
         super().start()
 
     def task(self, report):
-        kw = dict(dtype=DTYPES[self.dtype.currentText()], ref_index=self.ref.currentIndex(),
-                  progress=report.progress)
-        if self.code_mode():
-            res = mathexpr.run_code(self.code.toPlainText(), self.flist.paths(), self.out.path(),
-                                    log=report.log, **kw)
-            if res["value"] is not None:
-                extra = f"; {len(res['files'])} file(s) saved" if res["files"] else ", nothing saved"
-                return _value_text(res["value"]) + extra
-            return res["files"]
-        kind, value = mathexpr.run(self.expr.text(), self.flist.paths(), self.out.path(), **kw)
-        if kind == "value":
-            return _value_text(value) + "   (a single number, nothing saved)"
-        return [value]
+        res = mathexpr.run_code(self.code.toPlainText(), self.flist.paths(), self.out.path(),
+                                dtype=DTYPES[self.dtype.currentText()], ref_index=self.ref.currentIndex(),
+                                progress=report.progress, log=report.log)
+        if res["value"] is not None:
+            extra = f"; {len(res['files'])} file(s) saved" if res["files"] else "   (a single number, nothing saved)"
+            return _value_text(res["value"]) + extra
+        return res["files"]
 
     def _ok(self, result):
         super()._ok(result)
-        if self.code_mode() and self.panel.log.toPlainText().strip() and not self.panel.log.isVisible():
+        if self.panel.log.toPlainText().strip() and not self.panel.log.isVisible():
             self.panel.toggle_log()  # show what the code printed
 
     def _failed(self, msg, tb):
         super()._failed(msg, tb)
         m = re.match(r"line (\d+):", msg)
-        if self.code_mode() and m:
+        if m:
             self.code.highlight_line(int(m.group(1)))
 
 

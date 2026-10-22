@@ -391,3 +391,44 @@ def test_math_code_errors(t1, tmp_path):
         mathexpr.run_code("x = a.sum()\nx = 2", [t1], out)
     with pytest.raises(mathexpr.ExprError, match="does not fit the grid"):
         mathexpr.run_code("result = a[0]", [t1], out)
+
+
+def test_synthstrip_python_backend_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(synthstrip, "find_weights", lambda no_csf=False: f"/w/{synthstrip.WEIGHTS[no_csf][0]}")
+    cmd = synthstrip.build_command("python", "/venv/bin/python", "/d/t1.nii.gz", "/d/brain.nii.gz",
+                                   mask="/d/mask.nii.gz", no_csf=True, border=1.4, threads=4)
+    assert cmd[:3] == ["/venv/bin/python", "-m", "nipreps.synthstrip"]
+    assert cmd[cmd.index("--model") + 1] == "/w/synthstrip.nocsf.1.pt"  # no-CSF = other weights
+    assert "--no-csf" not in cmd and cmd[cmd.index("-b") + 1] == "1" and cmd[cmd.index("-n") + 1] == "4"
+    monkeypatch.setattr(synthstrip, "find_weights", lambda no_csf=False: None)
+    with pytest.raises(FileNotFoundError):
+        synthstrip.build_command("python", "py", "/d/t1.nii.gz", "/d/b.nii.gz")
+
+
+def test_synthstrip_weights_download_is_verified(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setenv("NIICE_CONFIG_DIR", str(tmp_path / "cfg"))
+    src = tmp_path / "srv"
+    src.mkdir()
+    (src / "synthstrip.1.pt").write_bytes(b"fake weights")
+    monkeypatch.setattr(synthstrip, "WEIGHTS_URL", src.as_uri() + "/{name}")
+    good = hashlib.sha256(b"fake weights").hexdigest()
+    monkeypatch.setitem(synthstrip.WEIGHTS, False, ("synthstrip.1.pt", "0" * 64))
+    with pytest.raises(RuntimeError, match="unexpected fingerprint"):
+        synthstrip.download_weights(False)
+    assert synthstrip.find_weights(False) is None  # rejected file is not kept
+    monkeypatch.setitem(synthstrip.WEIGHTS, False, ("synthstrip.1.pt", good))
+    seen = []
+    path = synthstrip.download_weights(False, lambda f, m: seen.append(f))
+    assert synthstrip.find_weights(False) == path and seen[-1] == 1.0
+
+
+@pytest.mark.skipif(not (synthstrip.python_backend_installed() and synthstrip.find_weights(False)),
+                    reason="nipreps-synthstrip/torch or weights not installed")
+def test_synthstrip_python_backend_runs(t1, tmp_path):
+    """Real run (about a minute on CPU) when the optional backend is installed."""
+    import subprocess
+    out, mask = str(tmp_path / "b.nii.gz"), str(tmp_path / "m.nii.gz")
+    cmd = synthstrip.build_command("python", sys.executable, t1, out, mask)
+    subprocess.run(cmd, check=True, capture_output=True)
+    assert nib.load(mask).shape == nib.load(t1).shape

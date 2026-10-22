@@ -167,7 +167,9 @@ class CompareWindow(QtWidgets.QDialog):
 
         # Are the images in the same affine space? (each one compared with the first)
         banner_row = QtWidgets.QHBoxLayout()
-        self.space_banner = Banner(*space_summary(paths))
+        level, title, details = space_summary(paths)
+        self.space_banner = Banner(level, title)  # just the verdict; details on hover
+        self.space_banner.setToolTip("<br>".join(details))
         banner_row.addWidget(self.space_banner, 1)
         vis = QtWidgets.QPushButton("Visualise alignment...")
         vis.setToolTip("Overlay the images in world coordinates (Plot > Visualise alignment)")
@@ -192,7 +194,7 @@ class CompareWindow(QtWidgets.QDialog):
         n_diff = sum(differs)
         row = QtWidgets.QHBoxLayout()
         self.only = QtWidgets.QCheckBox(f"Show only the {n_diff} differing fields")
-        self.only.setChecked(n_diff > 0)
+        self.only.setChecked(False)
         self.only.toggled.connect(self._filter)
         row.addWidget(self.only)
         row.addWidget(hint("Highlighted = differs (numbers compared with tolerance 1e-5)."), 1)
@@ -228,7 +230,7 @@ def space_summary(paths):
         n = "Both" if len(paths) == 2 else f"All {len(paths)}"
         return "same", f"{n} images are on the same voxel grid (same dimensions and affine).", []
     title = ("Images are NOT in the same affine space" if worst == "warning"
-             else "Images are on different voxel grids")
+             else "Same world space, different voxel grids")
     lines = []
     for p, r in results:
         name = html.escape(os.path.basename(p))

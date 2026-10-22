@@ -5,9 +5,9 @@ Right-click a NIfTI file (`.nii` / `.nii.gz`) in your file manager and get quick
 | Menu | What it does | Needs |
 |---|---|---|
 | **Info** | Header and image properties (dimensions, voxel size, orientation, affine, intensity statistics, full raw header with field explanations). Select several images → **header comparison** table that highlights the fields that differ. | — |
-| **Math** | Voxel-wise numpy expression between images, which are named `a`, `b`, `c`…, or several lines of Python in a code editor (paste your own code). Live syntax check, examples, single-number results are displayed instead of saved. | — |
+| **Math** | Python/numpy code between images, which are named `a`, `b`, `c`…: one line (`a - b`) or a whole pasted script. Live syntax check, examples, single-number results are displayed instead of saved. | — |
 | **Operations ▸** Binarise, Threshold, Extract ROI, Extract volume, Resample, Subtract | Plain numpy/scipy implementations (no FSL needed). Batch over all selected files. | — |
-| **Operations ▸** Skull strip (SynthStrip) | FreeSurfer SynthStrip brain extraction. | Docker, Podman, Apptainer *or* FreeSurfer ≥ 7.3 |
+| **Operations ▸** Skull strip (SynthStrip) | FreeSurfer SynthStrip brain extraction. | `pip install ".[synthstrip]"` (no container), *or* Docker / Podman / Apptainer / FreeSurfer ≥ 7.3 |
 | **Plot ▸** Make GIF, Histogram, Visualise alignment | Animated GIF with live preview; interactive histogram with optional mask and statistics; overlay of two images in world space with a same-space check. | — |
 | **Registration ▸** Register, Apply transforms | ANTs `antsRegistrationSyN[Quick].sh` with an overview of what will happen, a starting-overlap preview and a progress bar; `antsApplyTransforms` with ready-made direct/inverse chains. | ANTs |
 | **Settings** | Choose which tools appear in the menu, general options, plugins, which file managers get the menu. | — |
@@ -18,10 +18,22 @@ instead of bash scripts calling FSL, zenity and xterm.
 ## Install
 
 ```bash
-pip install git+https://github.com/tmspvn/NiiCE    # or: pip install .  from a clone
-niice install                                     # adds the right-click menu to detected file managers
-nautilus -q                                       # restart Nautilus so it picks the menu up
+python3 -m venv ~/.venvs/niice && source ~/.venvs/niice/bin/activate
+pip install --upgrade pip
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # only for skull stripping, see below
+pip install -e ".[test,synthstrip]"     # from the NiiCE folder; drop ",synthstrip" to skip it
+niice install                           # adds the right-click menu to detected file managers
+nautilus -q                             # restart Nautilus so it picks the menu up
 ```
+
+**Skull stripping without containers.** The `synthstrip` extra installs
+[nipreps-synthstrip](https://pypi.org/project/nipreps-synthstrip/) and PyTorch, so SynthStrip runs
+directly in Python. The torch line above installs the CPU-only build (~200 MB); without it pip may
+fetch the CUDA build, which is several GB. The trained weights are not part of that package: on
+first use NiiCE asks to download them (~30 MB each, from the
+[SynthStrip site](https://surfer.nmr.mgh.harvard.edu/docs/synthstrip/), MIT / CC BY 4.0) into
+`~/.config/niice/models/` and checks their SHA-256 fingerprint. `niice synthstrip-weights` downloads
+them in advance. A CPU run takes about a minute per image.
 
 Use a virtual environment or conda env if you like: the menu entries call the Python that ran
 `niice install`. Run `niice install` again after moving that environment.
@@ -33,7 +45,8 @@ Use a virtual environment or conda env if you like: the menu entries call the Py
 
 | Platform | Status |
 |---|---|
-| Linux — Nautilus (GNOME Files), Nemo, Caja | Supported: entries live in the file manager's `scripts` folder, under `NiiCE/`. |
+| Linux — Nautilus (GNOME Files), Nemo | Supported. **Top-level "NiiCE" menu** when the Python-extension plugin is installed (`sudo apt install python3-nautilus` / `python-nemo`, then `niice install` and `nautilus -q`); otherwise under *Scripts ▸ NiiCE*. |
+| Linux — Caja | Supported, under *Scripts ▸ NiiCE*. |
 | Linux — Dolphin (KDE) | Supported: service menu + a MIME type for `.nii`/`.nii.gz`. |
 | Windows — Explorer | **Experimental, not yet tested on a real machine.** Cascading menu in the current user's registry (no admin). Shows on `.nii` and all `.gz` files (Windows only sees the last extension). |
 | macOS | No installer yet. Create an Automator *Quick Action* (“Run Shell Script”, pass input *as arguments*) containing `/path/to/python -m niice run info "$@"`, one per tool. |
@@ -53,8 +66,8 @@ differing rows highlighted, *show only differences* toggle. Numbers are compared
 (`np.allclose`, relative 1e-5), so float rounding in the affine is not reported as a difference.
 Copy or export to CSV.
 
-**Same affine space?** With several images a banner on top says whether they are on the same voxel
-grid (each image compared with the first):
+**Same affine space?** With several images a one-line banner on top says whether they are on the
+same voxel grid (each image compared with the first); hover over it for the details:
 
 * green: same dimensions and affine, so voxel (i, j, k) is the same place in every image;
 * blue: same world space, different grid (e.g. 1 mm T1 and 2 mm fMRI of one session). Viewers align
@@ -70,15 +83,14 @@ a warning when its own qform and sform disagree, because then different programs
 differently. Math and Subtract show the same warning when their inputs are not on one grid.
 
 ### Math
-Images are `a`, `b`, … in list order (drag to reorder). Any `np.<function>` works, plus bare
-helpers (`mean`, `where`, `sqrt`, …) and constants `pi, e, nan, inf`. Use `&`, `|`, `~` to combine
-masks (not `and`/`or`/`not`). The expression is checked structurally before running (no imports,
-no file access, no attribute access except a whitelist such as `a.mean()`), so a typo cannot run
-arbitrary code. The result is saved on the grid of the *reference* image; if it is a single
-number (e.g. `np.mean(a[b > 0])`) it is shown instead. Data are loaded as float32.
+Images are `a`, `b`, … in list order (drag to reorder). Write Python in the code box (dark
+background, line numbers, auto-indent, Tab = 4 spaces, Ctrl+Enter runs). One line is enough:
 
-The **Code (multi-line)** tab is a small editor (line numbers, auto-indent, Tab = 4 spaces,
-Ctrl+Enter runs) for pasting or writing several lines of ordinary Python:
+```python
+(a - b) / b * 100
+```
+
+or paste a whole script:
 
 ```python
 mask = b > 0
@@ -88,18 +100,20 @@ save(mask, "mask_only")                     # extra file next to 'Save as'
 result = np.where(mask, (a - mu) / sd, 0)   # saved as 'Save as'
 ```
 
-* `a`, `b`, … are the images (float32 arrays); `np` (numpy), `ndi` (scipy.ndimage), `nib`
-  (nibabel) and `ref_img` (the reference image, e.g. `ref_img.header.get_zooms()`) are ready to use;
-  `import` works as usual.
-* `result = …` is saved under *Save as*. Without it, the value of the last line is used, like a
-  notebook cell. A single number is shown instead of saved.
+* Available (the **?** button lists them): `a`, `b`, … the images (float32 arrays), `np` (numpy),
+  `nib` (nibabel), `ndi` (scipy.ndimage), `ref_img` (the reference image as a nibabel image, e.g.
+  `ref_img.header.get_zooms()`); `import` works as usual.
+* `result = …` is saved under *Save as*; without it, the value of the last line is used, like a
+  notebook cell. A single number (e.g. `a[b > 0].mean()`) is shown instead of saved.
 * `save(array, "name")` writes additional images on the reference grid; `print()` goes to the log.
-* Errors give the line number and highlight that line in the editor. The last code is
-  remembered for next time, and *Examples* has a few starting points (z-score in a mask, several
-  outputs, smoothing by FWHM, largest cluster, temporal SNR).
+* Combine masks with `&`, `|`, `~` (not `and`/`or`/`not`). Results are saved on the grid of the
+  *reference* image; a warning appears if the images used are on different grids.
+* Errors give the line number and highlight that line. The last code is remembered for next time;
+  *Examples* has one-liners and longer snippets (z-score in a mask, several outputs, smoothing by
+  FWHM, largest cluster, temporal SNR).
 
-Unlike the one-line expression, code runs as normal, unrestricted Python on your computer, the same
-as running a script yourself. Only run code you trust.
+The code runs as normal, unrestricted Python on your computer, like running a script yourself:
+only run code you trust.
 
 ### Operations
 * **Binarise** — `value > threshold` → 1, else 0 (NaN → 0). Saved as uint8 `_mask`.
@@ -114,9 +128,10 @@ as running a script yourself. Only run code you trust.
   `i` samples old voxel coordinate `s·i + (s − 1)/2`, so the outer edges of the first and last
   voxels stay in place (the same convention as most resampling tools).
 * **Subtract** — `A − B` with a swap button; both on the same voxel grid.
-* **Skull strip** — SynthStrip; also saves `_brainmask`; options `--no-csf` and border. The backend
-  is chosen automatically (native `mri_synthstrip`, then Docker, Podman, Apptainer) or fixed in
-  Settings. Docker runs **without sudo** when you are in the `docker` group
+* **Skull strip** — SynthStrip; also saves `_brainmask`; options *exclude CSF* and border. The
+  backend is chosen automatically (Python `nipreps-synthstrip`, then native `mri_synthstrip`, then
+  Docker, Podman, Apptainer) or fixed in Settings. With the Python backend *exclude CSF* uses the
+  separate no-CSF weights and the border is in whole millimetres. Docker runs **without sudo** when you are in the `docker` group
   (`sudo usermod -aG docker $USER`); otherwise NiiCE retries through `pkexec` (graphical password
   prompt). Podman needs no root at all.
 

@@ -21,6 +21,7 @@ USAGE = """niice <command> [options]
   niice uninstall             remove the context-menu entries
   niice info --text FILES...  print header info in the terminal
   niice demo [FOLDER]         write small example images to try the tools on
+  niice synthstrip-weights    download the SynthStrip model weights (python backend)
 """
 
 
@@ -129,14 +130,35 @@ def main(argv=None) -> int:
                 return 1
             done = menus.install(names, plugins.enabled_tools(s))
             s["integrations"] = sorted(set(s.get("integrations", [])) | set(done))
-            print("Installed NiiCE menu for: " + ", ".join(done))
+            print("Installed the NiiCE menu:")
+            for n in done:
+                print(f"  {n}: {menus.install_notes.get(n, 'installed')}")
             if "nautilus" in done:
                 print("Restart Nautilus to see it:  nautilus -q")
+            if "nemo" in done:
+                print("Restart Nemo to see it:  nemo -q")
         else:
             menus.uninstall(names)
             s["integrations"] = [n for n in s.get("integrations", []) if n not in names]
             print("Removed NiiCE menu from: " + ", ".join(names))
         settings.save(s)
+        return 0
+    if cmd == "synthstrip-weights":
+        from .core import synthstrip
+        for no_csf in (False, True):
+            name = synthstrip.WEIGHTS[no_csf][0]
+            have = synthstrip.find_weights(no_csf)
+            if have:
+                print(f"{name}: already present ({have})")
+                continue
+            print(f"{name}: downloading...", flush=True)
+            path = synthstrip.download_weights(
+                no_csf, lambda f, m: print(f"\r  {100 * f:5.1f}%", end="", flush=True))
+            print(f"\n  saved and verified: {path}")
+        if not synthstrip.python_backend_installed():
+            print("\nNote: nipreps-synthstrip/torch are not installed in this Python yet:\n"
+                  "  pip install torch --index-url https://download.pytorch.org/whl/cpu\n"
+                  "  pip install nipreps-synthstrip")
         return 0
     if cmd == "demo":
         from .core.demo import write_demo
