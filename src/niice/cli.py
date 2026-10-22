@@ -153,6 +153,8 @@ def main(argv=None) -> int:
                 print("Restart Nautilus to see it:  nautilus -q")
             if "nemo" in done:
                 print("Restart Nemo to see it:  nemo -q")
+            if "thunar" in done:
+                print("Restart Thunar to see it:  thunar -q")
         else:
             menus.uninstall(names)
             s["integrations"] = [n for n in s.get("integrations", []) if n not in names]

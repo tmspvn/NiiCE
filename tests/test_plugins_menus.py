@@ -215,3 +215,63 @@ def test_hint_for_old_libstdcxx():
           "(required by .../shiboken6/libshiboken6.abi3.so.6.10)")
     assert "--python /usr/bin/python3" in cli._hint(tb)
     assert cli._hint("ZeroDivisionError") == ""
+
+
+USER_UCA = """<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+<action>
+\t<icon>utilities-terminal</icon>
+\t<name>Open Terminal Here</name>
+\t<submenu></submenu>
+\t<unique-id>1600000000000000-1</unique-id>
+\t<command>exo-open --working-directory %f --launch TerminalEmulator</command>
+\t<description>Example for a custom action</description>
+\t<range></range>
+\t<patterns>*</patterns>
+\t<startup-notify/>
+\t<directories/>
+</action>
+</actions>
+"""
+
+
+@pytest.mark.parametrize("submenus", [True, False])
+def test_thunar_custom_actions(tmp_path, monkeypatch, submenus):
+    import xml.etree.ElementTree as ET
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    uca = os.path.expanduser("~/.config/Thunar/uca.xml")
+    os.makedirs(os.path.dirname(uca))
+    with open(uca, "w") as fh:
+        fh.write(USER_UCA)
+    monkeypatch.setattr(menus, "thunar_version", lambda: (4, 18) if submenus else (1, 8))
+    tools = plugins.enabled_tools()
+    for _ in range(2):  # installing twice must not duplicate entries
+        menus.install(["thunar"], tools)
+    root = ET.parse(uca).getroot()
+    actions = root.findall("action")
+    ours = [a for a in actions if a.findtext("unique-id").startswith("niice-")]
+    assert len(ours) == len(tools)
+    assert actions[0].findtext("name") == "Open Terminal Here"      # user's action kept, first
+    assert os.path.exists(uca + ".niice-backup")
+    binarise = next(a for a in ours if a.findtext("unique-id") == "niice-ops.binarise")
+    assert binarise.findtext("command").endswith("-m niice run ops.binarise %F")
+    assert "*.nii.gz" in binarise.findtext("patterns") and binarise.find("other-files") is not None
+    if submenus:
+        assert (binarise.findtext("name"), binarise.findtext("submenu")) == ("Binarise", "NiiCE/Operations")
+        assert next(a for a in ours if a.findtext("unique-id") == "niice-info").findtext("submenu") == "NiiCE"
+        assert "submenu" in menus.install_notes["thunar"]
+    else:
+        assert binarise.findtext("name") == "NiiCE: Operations: Binarise"
+    assert ours[-1].findtext("name").endswith("Settings...")
+    menus.uninstall(["thunar"])
+    left = ET.parse(uca).getroot().findall("action")
+    assert [a.findtext("name") for a in left] == ["Open Terminal Here"]
+
+
+def test_thunar_without_existing_file(tmp_path, monkeypatch):
+    import xml.etree.ElementTree as ET
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(menus, "thunar_version", lambda: None)
+    menus.install(["thunar"], plugins.enabled_tools())
+    uca = os.path.expanduser("~/.config/Thunar/uca.xml")
+    assert ET.parse(uca).getroot().tag == "actions" and not os.path.exists(uca + ".niice-backup")

@@ -253,6 +253,14 @@ if [[ $MENU -eq 0 ]]; then
     info "Skipped (--no-menu)"
 else
     "$VENV/bin/niice" install || warn "No supported file manager found (see the README for others)."
+    if have thunar && pgrep -x thunar >/dev/null 2>&1; then
+        if ask "Restart Thunar now so the menu appears (open Thunar windows will close)?"; then
+            thunar -q >/dev/null 2>&1 || true
+            info "Restarted. Right-click a .nii or .nii.gz file."
+        else
+            info "Later, run: thunar -q"
+        fi
+    fi
     if have nautilus && pgrep -x nautilus >/dev/null 2>&1; then
         if ask "Restart Nautilus now so the menu appears (open Files windows will close)?"; then
             nautilus -q >/dev/null 2>&1 || true

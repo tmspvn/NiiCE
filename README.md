@@ -24,7 +24,7 @@ git clone https://github.com/tmspvn/NiiCE && cd NiiCE
 ```
 
 The script installs NiiCE in its own environment (`~/.venvs/niice`), adds the `niice` command and
-the right-click menu (Nautilus, Nemo, Caja, Dolphin). Run `./install.sh --help` for options and
+the right-click menu (Nautilus, Nemo, Caja, Thunar/XFCE, Dolphin). Run `./install.sh --help` for options and
 `./install.sh --uninstall` to remove it. Registration needs [ANTs](https://github.com/ANTsX/ANTs)
 on your `PATH`; everything else is included.
 
