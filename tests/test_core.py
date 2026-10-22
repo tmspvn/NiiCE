@@ -346,3 +346,48 @@ def test_text_report_mentions_space(t1, tmp_path):
     aff[:3, 3] += 50
     other = make(tmp_path / "o2.nii.gz", np.zeros(nib.load(t1).shape, np.float32), affine=aff)
     assert "[WARN]" in info.text_report([t1, other])
+
+
+# --------------------------------------------------------------------------- math: multi-line code
+def test_math_code_result_save_and_print(t1, labels, tmp_path):
+    out = str(tmp_path / "res.nii.gz")
+    logged = []
+    code = """
+mask = a > 100
+print("voxels", int(mask.sum()))
+save(mask, "mask_only")
+def double(x):
+    return 2 * x
+result = double(a) * mask
+"""
+    res = mathexpr.run_code(code, [t1], out, log=logged.append)
+    a = nib.load(t1).get_fdata()
+    assert res["value"] is None and res["files"][0] == out
+    assert res["files"][1].endswith("mask_only.nii.gz")
+    np.testing.assert_allclose(nib.load(out).get_fdata(), 2 * a * (a > 100), rtol=1e-5)
+    assert any(l.startswith("voxels") for l in logged)
+
+
+def test_math_code_last_expression_and_scalar(t1, tmp_path):
+    out = str(tmp_path / "r.nii.gz")
+    res = mathexpr.run_code("m = a > 0\na[m].mean()", [t1], out)
+    a = nib.load(t1).get_fdata()
+    assert res["value"] == pytest.approx(a[a > 0].mean(), rel=1e-5) and res["files"] == []
+    res = mathexpr.run_code("from scipy import ndimage\nndimage.gaussian_filter(a, 1)", [t1], out)
+    assert res["files"] == [out]
+
+
+def test_math_code_errors(t1, tmp_path):
+    out = str(tmp_path / "r.nii.gz")
+    with pytest.raises(mathexpr.ExprError, match="Syntax error on line 2"):
+        mathexpr.prepare_code("x = 1\nx = (", 1)
+    with pytest.raises(mathexpr.ExprError, match="'c' is used but is not an image"):
+        mathexpr.prepare_code("result = a + c", 2)
+    # a letter that is assigned by the code itself is just a variable
+    assert mathexpr.prepare_code("for i in range(3):\n    c = i\nresult = a * c", 1)[1] == ["a"]
+    with pytest.raises(mathexpr.ExprError, match=r"line 3: ZeroDivisionError"):
+        mathexpr.run_code("x = 1\ny = 0\nz = x / y\nresult = a", [t1], out)
+    with pytest.raises(mathexpr.ExprError, match="Nothing to save"):
+        mathexpr.run_code("x = a.sum()\nx = 2", [t1], out)
+    with pytest.raises(mathexpr.ExprError, match="does not fit the grid"):
+        mathexpr.run_code("result = a[0]", [t1], out)

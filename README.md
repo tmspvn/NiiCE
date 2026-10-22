@@ -5,7 +5,7 @@ Right-click a NIfTI file (`.nii` / `.nii.gz`) in your file manager and get quick
 | Menu | What it does | Needs |
 |---|---|---|
 | **Info** | Header and image properties (dimensions, voxel size, orientation, affine, intensity statistics, full raw header with field explanations). Select several images → **header comparison** table that highlights the fields that differ. | — |
-| **Math** | Voxel-wise numpy expression between images, which are named `a`, `b`, `c`… Live syntax check, examples, single-number results are displayed instead of saved. | — |
+| **Math** | Voxel-wise numpy expression between images, which are named `a`, `b`, `c`…, or several lines of Python in a code editor (paste your own code). Live syntax check, examples, single-number results are displayed instead of saved. | — |
 | **Operations ▸** Binarise, Threshold, Extract ROI, Extract volume, Resample, Subtract | Plain numpy/scipy implementations (no FSL needed). Batch over all selected files. | — |
 | **Operations ▸** Skull strip (SynthStrip) | FreeSurfer SynthStrip brain extraction. | Docker, Podman, Apptainer *or* FreeSurfer ≥ 7.3 |
 | **Plot ▸** Make GIF, Histogram, Visualise alignment | Animated GIF with live preview; interactive histogram with optional mask and statistics; overlay of two images in world space with a same-space check. | — |
@@ -74,6 +74,30 @@ masks (not `and`/`or`/`not`). The expression is checked structurally before runn
 no file access, no attribute access except a whitelist such as `a.mean()`), so a typo cannot run
 arbitrary code. The result is saved on the grid of the *reference* image; if it is a single
 number (e.g. `np.mean(a[b > 0])`) it is shown instead. Data are loaded as float32.
+
+The **Code (multi-line)** tab is a small editor (line numbers, auto-indent, Tab = 4 spaces,
+Ctrl+Enter runs) for pasting or writing several lines of ordinary Python:
+
+```python
+mask = b > 0
+mu, sd = a[mask].mean(), a[mask].std()
+print("mean", mu, "sd", sd)                 # shown in the log
+save(mask, "mask_only")                     # extra file next to 'Save as'
+result = np.where(mask, (a - mu) / sd, 0)   # saved as 'Save as'
+```
+
+* `a`, `b`, … are the images (float32 arrays); `np` (numpy), `ndi` (scipy.ndimage), `nib`
+  (nibabel) and `ref_img` (the reference image, e.g. `ref_img.header.get_zooms()`) are ready to use;
+  `import` works as usual.
+* `result = …` is saved under *Save as*. Without it, the value of the last line is used, like a
+  notebook cell. A single number is shown instead of saved.
+* `save(array, "name")` writes additional images on the reference grid; `print()` goes to the log.
+* Errors give the line number and highlight that line in the editor. The last code is
+  remembered for next time, and *Examples* has a few starting points (z-score in a mask, several
+  outputs, smoothing by FWHM, largest cluster, temporal SNR).
+
+Unlike the one-line expression, code runs as normal, unrestricted Python on your computer, the same
+as running a script yourself. Only run code you trust.
 
 ### Operations
 * **Binarise** — `value > threshold` → 1, else 0 (NaN → 0). Saved as uint8 `_mask`.
