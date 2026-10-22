@@ -25,11 +25,11 @@ def config_dir() -> str:
     if override:
         return override
     if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
     elif sys.platform == "darwin":
         base = os.path.expanduser("~/Library/Application Support")
     else:
-        base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")  # empty = unset
     return os.path.join(base, "niice")
 
 

@@ -55,7 +55,7 @@ def test_user_plugin_file_is_loaded(tmp_path):
 
 def test_nautilus_install_and_uninstall(tmp_path):
     tools = plugins.enabled_tools()
-    menus.install(["nautilus"], tools)
+    menus.install(["nautilus"], tools, use_extension=False)  # Scripts > NiiCE variant
     root = os.path.expanduser("~/.local/share/nautilus/scripts/NiiCE")
     script = os.path.join(root, "Operations", "Binarise")
     assert os.access(script, os.X_OK)
@@ -69,7 +69,18 @@ def test_refuses_foreign_folder(tmp_path):
     root = os.path.expanduser("~/.local/share/nautilus/scripts/NiiCE")
     os.makedirs(root)
     with pytest.raises(RuntimeError):
-        menus.install(["nautilus"], plugins.enabled_tools())
+        menus.install(["nautilus"], plugins.enabled_tools(), use_extension=False)
+
+
+@pytest.mark.parametrize("plugin_present", [True, False])
+def test_install_picks_top_level_menu_when_plugin_present(tmp_path, monkeypatch, plugin_present):
+    monkeypatch.setattr(menus, "python_extension_available", lambda name: plugin_present)
+    menus.install(["nautilus"], plugins.enabled_tools())
+    ext = os.path.expanduser("~/.local/share/nautilus-python/extensions/niice_menu.py")
+    scripts = os.path.expanduser("~/.local/share/nautilus/scripts/NiiCE")
+    assert os.path.exists(ext) == plugin_present
+    assert os.path.isdir(scripts) == (not plugin_present)
+    assert menus.install_notes["nautilus"].startswith("Scripts") == (not plugin_present)
 
 
 def test_dolphin_install(tmp_path):
@@ -191,3 +202,9 @@ def test_top_level_extension_menu(tmp_path, monkeypatch, fm, module):
     # falling back to scripts removes the extension again
     menus.install([fm], tools, use_extension=False)
     assert not os.path.exists(path) and "Scripts" in menus.install_notes[fm]
+
+
+def test_empty_xdg_config_home_falls_back(monkeypatch, tmp_path):
+    monkeypatch.delenv("NIICE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", "")
+    assert settings.config_dir() == os.path.join(os.path.expanduser("~/.config"), "niice")

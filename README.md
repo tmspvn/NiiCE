@@ -17,14 +17,36 @@ instead of bash scripts calling FSL, zenity and xterm.
 
 ## Install
 
+On Linux, from the unzipped/cloned NiiCE folder:
+
+```bash
+./install.sh
+```
+
+It checks for missing system packages (Python venv support, the Qt library, and
+`python3-nautilus`/`python-nemo` for a top-level right-click menu) and offers to install them with
+apt, dnf or pacman (asking before it uses sudo). It then creates `~/.venvs/niice`, installs NiiCE
+with skull stripping (CPU-only PyTorch), links the `niice` command into `~/.local/bin`, offers to
+download the SynthStrip weights, and adds the right-click menu. The folder can be deleted
+afterwards: NiiCE is copied into the environment.
+
+* **Update:** unzip/pull the new version and run `./install.sh` again (reuses the environment).
+* **Remove:** `./install.sh --uninstall` (add `--purge` to delete settings, plugins and weights too).
+* Options: `--no-synthstrip` (skips PyTorch, ~1 GB less), `--gpu` (CUDA PyTorch), `--no-menu`,
+  `--venv PATH`, `--dev` (editable install with test tools), `-y` (no questions), `--help`.
+
+<details><summary>Manual installation</summary>
+
 ```bash
 python3 -m venv ~/.venvs/niice && source ~/.venvs/niice/bin/activate
 pip install --upgrade pip
 pip install torch --index-url https://download.pytorch.org/whl/cpu   # only for skull stripping, see below
-pip install -e ".[test,synthstrip]"     # from the NiiCE folder; drop ",synthstrip" to skip it
+pip install ".[synthstrip]"             # from the NiiCE folder; drop "[synthstrip]" to skip it
 niice install                           # adds the right-click menu to detected file managers
 nautilus -q                             # restart Nautilus so it picks the menu up
 ```
+
+</details>
 
 **Skull stripping without containers.** The `synthstrip` extra installs
 [nipreps-synthstrip](https://pypi.org/project/nipreps-synthstrip/) and PyTorch, so SynthStrip runs
