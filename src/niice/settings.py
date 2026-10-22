@@ -13,9 +13,9 @@ DEFAULTS = {
     "synthstrip_image": "freesurfer/synthstrip",
     "docker_pkexec": False,       # prefix docker with pkexec (graphical sudo)
     "ants_threads": 3,
-    "preview_max_mvox": 64,
+    "preview_max_mvox": 64,       # skip previews of images with more voxels (millions)
     "theme": "system",            # 'system' | 'light' | 'dark'
-    "accent": "#1565c0",          # accent colour of buttons, selections, progress bars       # skip previews of images with more voxels (millions)
+    "accent": "#1565c0",          # accent colour of buttons, selections, progress bars
     "integrations": [],           # file managers the menu was installed into
 }
 
