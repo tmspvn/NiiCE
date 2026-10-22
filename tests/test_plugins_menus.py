@@ -101,3 +101,16 @@ def test_collect_merges_concurrent_launches(tmp_path, monkeypatch):
         t.join()
     leaders = [r for r in results if r]
     assert len(leaders) == 1 and sorted(leaders[0]) == sorted(f"/data/f{i}.nii" for i in range(5))
+
+
+def test_cli_missing_file_and_demo(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_notify_failure", lambda t, m: print("FAIL", t, m))
+    assert cli.run_tool("info", [str(tmp_path / "a.nii.gz")]) == 2
+    assert "File not found" in capsys.readouterr().out
+    assert cli.main(["demo", str(tmp_path / "demo")]) == 0
+    names = sorted(os.listdir(tmp_path / "demo"))
+    assert names == ["T1w.nii.gz", "T2w_shifted.nii.gz", "bold.nii.gz", "labels.nii.gz"]
+    from niice.core import io, space
+    d = tmp_path / "demo"
+    assert space.compare(io.load(str(d / "T1w.nii.gz")), io.load(str(d / "T2w_shifted.nii.gz"))).level == "warning"
+    assert space.compare(io.load(str(d / "T1w.nii.gz")), io.load(str(d / "labels.nii.gz"))).level == "same"

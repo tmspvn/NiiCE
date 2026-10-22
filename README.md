@@ -39,7 +39,9 @@ Use a virtual environment or conda env if you like: the menu entries call the Py
 | macOS | No installer yet. Create an Automator *Quick Action* (“Run Shell Script”, pass input *as arguments*) containing `/path/to/python -m niice run info "$@"`, one per tool. |
 
 Every tool also runs from a terminal: `niice run <tool-id> files…` or the short form
-`niice info a.nii.gz b.nii.gz`. `niice list` shows the ids. `niice info --text files…` prints the
+`niice info my_t1.nii.gz my_t2.nii.gz`. No data at hand? `niice demo` writes four small example
+images (a T1-like volume, a copy with a shifted header, a label image and a 4D series) into
+`./niice_demo` and prints commands to try. `niice list` shows the ids. `niice info --text files…` prints the
 header report without a window.
 
 ## Tools in more detail

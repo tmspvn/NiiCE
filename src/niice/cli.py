@@ -20,6 +20,7 @@ USAGE = """niice <command> [options]
   niice install [--targets nautilus nemo caja dolphin explorer]
   niice uninstall             remove the context-menu entries
   niice info --text FILES...  print header info in the terminal
+  niice demo [FOLDER]         write small example images to try the tools on
 """
 
 
@@ -52,6 +53,11 @@ def run_tool(tool_id: str, files: list[str], collect: bool = False) -> int:
         _notify_failure("Tool disabled", f"'{t.menu}' is disabled in NiiCE settings.")
         return 2
     files = [os.path.abspath(f) for f in files]
+    missing = [f for f in files if not os.path.exists(f)]
+    if missing:
+        _notify_failure("File not found", "These files do not exist:\n" + "\n".join(missing)
+                        + "\n\nTip: 'niice demo' writes example images you can try the tools on.")
+        return 2
     if t.nifti_only:
         skipped = [f for f in files if not io.is_nifti(f)]
         files = [f for f in files if io.is_nifti(f)]
@@ -131,6 +137,18 @@ def main(argv=None) -> int:
             s["integrations"] = [n for n in s.get("integrations", []) if n not in names]
             print("Removed NiiCE menu from: " + ", ".join(names))
         settings.save(s)
+        return 0
+    if cmd == "demo":
+        from .core.demo import write_demo
+        folder = os.path.abspath(argv[1] if len(argv) > 1 else "niice_demo")
+        for path, what in write_demo(folder):
+            print(f"  {os.path.basename(path):<24} {what}")
+        print(f"\nWritten to {folder}. Try for example:\n"
+              f"  cd {folder}\n"
+              "  niice info T1w.nii.gz T2w_shifted.nii.gz\n"
+              "  niice alignment T1w.nii.gz T2w_shifted.nii.gz\n"
+              "  niice math T1w.nii.gz labels.nii.gz\n"
+              "  niice gif bold.nii.gz")
         return 0
     if cmd == "info" and "--text" in argv:
         from .core.info import text_report
