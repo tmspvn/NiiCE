@@ -16,6 +16,8 @@ DEFAULTS = {
     "preview_max_mvox": 64,       # skip previews of images with more voxels (millions)
     "theme": "system",            # 'system' | 'light' | 'dark'
     "accent": "#1565c0",          # accent colour of buttons, selections, progress bars
+    "popup_seconds": 6,           # how long a result pop-up stays on screen (0 = until closed)
+    "math_remember_code": False,  # restore the last Math code next time
     "integrations": [],           # file managers the menu was installed into
 }
 

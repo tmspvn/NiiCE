@@ -8,10 +8,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import io, plotting
 from . import theme
-from .common import (PathEdit, ToolDialog, app, file_list_with_buttons, hint, preview_limit,
+from .common import (PathEdit, ToolDialog, app, file_list_with_buttons, hint,
                      run_dialog, show_modal, to_qimage)
 
 Qt = QtCore.Qt
+PREVIEW_VOXELS = 2_000_000  # previews of bigger volumes use every k-th voxel
 CMAPS = ["grey", "inferno", "viridis", "magma", "plasma", "hot", "jet", "coolwarm", "gray_r"]
 
 
@@ -84,7 +85,7 @@ class GifDialog(ToolDialog):
             checks.addWidget(c, i // 2, i % 2)
         form.addRow(checks)
         first = self.files[0] if self.files else "image.nii.gz"
-        self.out = PathEdit(io.unique_path(io.split_ext(first)[0] + ".gif"), save=True, filter="GIF (*.gif)")
+        self.out = PathEdit(io.unique_path(io.split_ext(first)[0] + "_NiiCE.gif"), save=True, filter="GIF (*.gif)")
         form.addRow("Save as", self.out)
         left.addLayout(form)
         split.addLayout(left, 3)
@@ -137,25 +138,22 @@ class GifDialog(ToolDialog):
             scale=1.0 if preview else self.scale.value(), cmap=None if cmap in ("", "grey") else cmap,
             crop=self.crop.isChecked(), fps=self.fps.value(),
             step=max(self.step.value(), 2) if preview and self.step.value() == 1 else self.step.value(),
+            max_voxels=PREVIEW_VOXELS if preview else None,
             layout=self.layout_.currentText())
 
     def _render_preview(self):
         paths = self.flist.paths()
         if not paths:
             return
-        for p in paths:  # a 4D preview reads every volume, a 3D one the whole image
-            reason = io.preview_skip_reason(p, preview_limit(), all_volumes=True)
-            if reason:
-                self.timer.stop()
-                self.frames = None
-                self.preview.setText(f"{os.path.basename(p)}:\n{reason}\n\nThe GIF can still be saved.")
-                self.preview_info.setText("")
-                return
+        # Big images are previewed from a reduced copy (every k-th voxel); the saved GIF uses
+        # the full image.
+        reduced = any(io.voxel_counts(p)[0] > PREVIEW_VOXELS for p in paths)
         QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.frames = plotting.render_frames(paths, self.options(preview=True))
             n = len(self.frames)
-            self.preview_info.setText(f"Preview: {n} frames (every 2nd shown, magnification 1). "
+            self.preview_info.setText(f"Preview: {n} frames (every 2nd shown, magnification 1"
+                                      + (", reduced resolution" if reduced else "") + "). "
                                       f"Final: about {self._final_frames(n)} frames.")
             self.frame_i = 0
             self.timer.start(int(1000 / self.fps.value()))
@@ -209,11 +207,18 @@ class HistogramWindow(QtWidgets.QDialog):
         lay.addWidget(QtWidgets.QLabel("Histogram", objectName="title"))
 
         controls = QtWidgets.QHBoxLayout()
+        # Bins: automatic (Freedman-Diaconis rule) or a number typed by hand
+        self.bins_auto = QtWidgets.QRadioButton("Auto bins")
+        self.bins_auto.setChecked(True)
+        self.bins_auto.setToolTip("Freedman-Diaconis rule: bin width = 2 x IQR / N^(1/3), "
+                                  "IQR = inter-quartile range, N = number of voxels")
+        self.bins_manual = QtWidgets.QRadioButton("Manual:")
         self.bins = QtWidgets.QSpinBox()
-        self.bins.setRange(0, 5000)
-        self.bins.setValue(0)
-        self.bins.setSpecialValueText("auto")
-        self.bins.setPrefix("bins: ")
+        self.bins.setRange(2, 5000)
+        self.bins.setValue(100)
+        self.bins.setEnabled(False)
+        self.bins_used = QtWidgets.QLabel("", objectName="hint")
+        self.bins_manual.toggled.connect(self.bins.setEnabled)
         self.zeros = QtWidgets.QCheckBox("Ignore zeros")
         self.zeros.setChecked(True)
         self.logy = QtWidgets.QCheckBox("Log counts")
@@ -229,8 +234,8 @@ class HistogramWindow(QtWidgets.QDialog):
         for f in self.files:
             self.mask.addItem("mask: " + os.path.basename(f), f)
         self.mask.addItem("choose mask...", "__browse__")
-        for w in (self.bins, self.zeros, self.logy, self.density, QtWidgets.QLabel("range"), self.lo,
-                  self.hi, self.mask):
+        for w in (self.bins_auto, self.bins_manual, self.bins, self.bins_used, self.zeros, self.logy,
+                  self.density, QtWidgets.QLabel("range"), self.lo, self.hi, self.mask):
             controls.addWidget(w)
         controls.addStretch(1)
         lay.addLayout(controls)
@@ -253,7 +258,7 @@ class HistogramWindow(QtWidgets.QDialog):
         self._cache = {}
         for w in (self.bins, self.lo, self.hi):
             w.valueChanged.connect(self.redraw)
-        for w in (self.zeros, self.logy, self.density):
+        for w in (self.zeros, self.logy, self.density, self.bins_auto):
             w.toggled.connect(self.redraw)
         self.mask.currentIndexChanged.connect(self._mask_changed)
         self.redraw()
@@ -302,11 +307,14 @@ class HistogramWindow(QtWidgets.QDialog):
         lo, hi = np.percentile(allv, [self.lo.value(), self.hi.value()])
         if hi <= lo:
             hi = lo + 1
-        bins = self.bins.value() or "auto"
+        bins = "auto" if self.bins_auto.isChecked() else self.bins.value()
         if bins == "auto":
             # Freedman-Diaconis rule on the shown range, capped so huge images stay responsive
             edges = np.histogram_bin_edges(allv[(allv >= lo) & (allv <= hi)][:2_000_000], bins="fd")
             bins = int(np.clip(len(edges) - 1, 10, 512))
+            self.bins_used.setText(f"({bins})")
+        else:
+            self.bins_used.setText("")
         for f, d in zip(targets, data):
             d = d[(d >= lo) & (d <= hi)]
             colour = {"color": theme.accent()} if len(targets) == 1 else {}

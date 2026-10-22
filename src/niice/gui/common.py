@@ -171,10 +171,16 @@ class RunPanel(QtWidgets.QWidget):
         self.open_file_btn.setVisible(False)
         self.close_btn = QtWidgets.QPushButton("Close")
         self.run_btn = QtWidgets.QPushButton(run_label)
-        self.run_btn.setDefault(True)
         self.run_btn.clicked.connect(self._run_or_cancel)
+        # Plain Enter must not run or close the dialog (it is used inside text fields);
+        # Ctrl+Enter runs (see ToolDialog.run_and_close).
+        for b in (self.run_btn, self.close_btn, self.open_btn, self.open_file_btn):
+            b.setAutoDefault(False)
+            b.setDefault(False)
         row.addWidget(self.log_btn)
         row.addStretch(1)
+        self.shortcut_hint = QtWidgets.QLabel("Ctrl+Enter: run and close", objectName="hint")
+        row.addWidget(self.shortcut_hint)
         row.addWidget(self.open_file_btn)
         row.addWidget(self.open_btn)
         row.addWidget(self.close_btn)
@@ -273,6 +279,10 @@ class ToolDialog(QtWidgets.QDialog):
         self.panel.close_btn.clicked.connect(self.close)
         self.worker: Optional[Worker] = None
         self.report: Optional[Report] = None
+        self.auto_close = False
+        self.quick_result = None  # (message, outputs) shown in a pop-up after a Ctrl+Enter run
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            QtGui.QShortcut(QtGui.QKeySequence(keys), self, activated=self.run_and_close)
         self.build(self.body)
 
     # -- to override
@@ -288,18 +298,23 @@ class ToolDialog(QtWidgets.QDialog):
     def done_message(self, result) -> str:
         if isinstance(result, str):
             return result
-        result = list(result or [])
-        if len(result) == 1:
-            return f"Saved {os.path.basename(result[0])}"
-        return f"Saved {len(result)} files"
+        return saved_text(list(result or []))
 
     # -- helpers
     def out_name(self, src: str, suffix: str) -> str:
         return io.out_path(src, suffix, ext=self.settings.get("output_ext", "same"))
 
+    def run_and_close(self):
+        """Ctrl+Enter: run with the current settings; on success close and show the result."""
+        if self.panel.running:
+            return
+        self.auto_close = True
+        self.start()
+
     def start(self):
         err = self.validate()
         if err:
+            self.auto_close = False
             self.panel.finished(err, ok=False)
             return
         self.report = Report()
@@ -323,8 +338,12 @@ class ToolDialog(QtWidgets.QDialog):
         self._end(self.done_message(result), outputs)
         if outputs and self.settings.get("open_folder_when_done"):
             open_in_file_manager(outputs[0])
+        if self.auto_close:
+            self.quick_result = (self.done_message(result), outputs)
+            self.accept()
 
     def _failed(self, msg, tb):
+        self.auto_close = False  # keep the window open so the error can be read
         self.panel.append_log(tb)
         self._end(f"Error: {msg}", ok=False)
 
@@ -357,9 +376,15 @@ class FileList(QtWidgets.QListWidget):
         self.model().rowsMoved.connect(lambda *a: self._relabel())
         for f in files:
             self.add(f)
-        height = max(70, min(220, 26 * (len(files) + 1)))
-        self.setMinimumHeight(min(height, 130))
-        self.setMaximumHeight(height)
+        self.setToolTip("Drag to reorder; Delete removes the selected files")
+        self.fit_height()
+
+    def fit_height(self):
+        """Exactly as tall as its rows (2 to 8 rows visible), so dialogs have no empty space."""
+        row = self.sizeHintForRow(0) if self.count() else self.fontMetrics().height() + 6
+        rows = min(max(self.count(), 2), 8)
+        h = row * rows + 2 * self.frameWidth() + 4
+        self.setFixedHeight(h)
 
     def add(self, path: str):
         it = QtWidgets.QListWidgetItem(os.path.basename(path))
@@ -367,6 +392,8 @@ class FileList(QtWidgets.QListWidget):
         it.setToolTip(path)
         self.addItem(it)
         self._relabel()
+        if hasattr(self, "fit_height"):
+            self.fit_height()
 
     def paths(self) -> list[str]:
         return [self.item(i).data(Qt.UserRole) for i in range(self.count())]
@@ -388,19 +415,23 @@ class FileList(QtWidgets.QListWidget):
 
 
 def file_list_with_buttons(files, letters=False, title="Images") -> tuple[QtWidgets.QGroupBox, FileList]:
+    """Compact image list: the list with small Add / Remove buttons beside it."""
     box = QtWidgets.QGroupBox(title)
-    lay = QtWidgets.QVBoxLayout(box)
+    lay = QtWidgets.QHBoxLayout(box)
+    lay.setContentsMargins(6, 4, 6, 6)
     fl = FileList(files, letters=letters)
-    lay.addWidget(fl)
-    row = QtWidgets.QHBoxLayout()
-    add = QtWidgets.QPushButton("Add...")
-    rem = QtWidgets.QPushButton("Remove")
-    hint = QtWidgets.QLabel("Drag to reorder" if len(files) > 1 or letters else "", objectName="hint")
-    row.addWidget(hint)
-    row.addStretch(1)
-    row.addWidget(add)
-    row.addWidget(rem)
-    lay.addLayout(row)
+    lay.addWidget(fl, 1)
+    col = QtWidgets.QVBoxLayout()
+    col.setSpacing(2)
+    add = QtWidgets.QToolButton(text="+")
+    add.setToolTip("Add images")
+    rem = QtWidgets.QToolButton(text="\u2212")
+    rem.setToolTip("Remove the selected images")
+    for b in (add, rem):
+        b.setFixedWidth(28)
+        col.addWidget(b)
+    col.addStretch(1)
+    lay.addLayout(col)
 
     def on_add():
         start = os.path.dirname(fl.paths()[0]) if fl.count() else ""
@@ -412,6 +443,7 @@ def file_list_with_buttons(files, letters=False, title="Images") -> tuple[QtWidg
         for it in fl.selectedItems():
             fl.takeItem(fl.row(it))
         fl._relabel()
+        fl.fit_height()
 
     add.clicked.connect(on_add)
     rem.clicked.connect(on_rem)
@@ -590,6 +622,187 @@ class Thumbs(QtWidgets.QWidget):
             self._placeholder("?", str(exc))
 
 
+def saved_text(paths, limit: int = 6) -> str:
+    """'Saved:' followed by the full path of each output (at most `limit`, then a count)."""
+    if not paths:
+        return "Done"
+    shown = "\n".join(paths[:limit])
+    more = f"\n... and {len(paths) - limit} more" if len(paths) > limit else ""
+    return f"Saved:\n{shown}{more}"
+
+
+class Toast(QtWidgets.QWidget):
+    """Small window in the screen corner: 'Running...' while working, then the saved paths.
+
+    On success it closes by itself after a few seconds (hovering keeps it open); on error it
+    stays open with an explanation and the log.
+    """
+    finished = QtCore.Signal()
+
+    def __init__(self, title: str, seconds: float = 6.0, parent=None):
+        super().__init__(parent, Qt.Tool | Qt.WindowStaysOnTopHint)
+        self.setWindowTitle(f"NiiCE - {title}")
+        self.setMinimumWidth(460)
+        self.seconds = seconds
+        lay = QtWidgets.QVBoxLayout(self)
+        self.title = QtWidgets.QLabel(f"<b>{title}</b>")
+        self.text = QtWidgets.QLabel("Running...")
+        self.text.setWordWrap(True)
+        self.text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.bar = QtWidgets.QProgressBar()
+        self.bar.setRange(0, 0)  # busy until done
+        self.bar.setTextVisible(False)
+        self.log = QtWidgets.QPlainTextEdit(objectName="log")
+        self.log.setReadOnly(True)
+        self.log.setVisible(False)
+        self.log.setMinimumHeight(160)
+        self.buttons = QtWidgets.QHBoxLayout()
+        self.buttons.addStretch(1)
+        self.open_btn = QtWidgets.QPushButton("Open folder")
+        self.open_btn.setVisible(False)
+        self.close_btn = QtWidgets.QPushButton("Close")
+        self.close_btn.clicked.connect(self.close)
+        self.buttons.addWidget(self.open_btn)
+        self.buttons.addWidget(self.close_btn)
+        for w in (self.title, self.text, self.bar, self.log):
+            lay.addWidget(w)
+        lay.addLayout(self.buttons)
+        self._timer = QtCore.QTimer(self, singleShot=True, timeout=self.close)
+        self._folder = None
+        self.open_btn.clicked.connect(lambda: self._folder and open_in_file_manager(self._folder))
+
+    def add_button(self, label: str, callback) -> QtWidgets.QPushButton:
+        b = QtWidgets.QPushButton(label)
+        b.clicked.connect(callback)
+        self.buttons.insertWidget(1, b)
+        return b
+
+    def show_corner(self):
+        self.adjustSize()
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen is not None:
+            g = screen.availableGeometry()
+            self.move(g.right() - self.width() - 24, g.bottom() - self.height() - 48)
+        self.show()
+        self.raise_()
+
+    def running(self, message: str):
+        self.text.setText(message)
+
+    def success(self, message: str, outputs=()):
+        from . import theme
+        self.bar.setRange(0, 1)
+        self.bar.setValue(1)
+        self.text.setText(message)
+        self.text.setStyleSheet(f"color: {theme.ok_color()};")
+        if outputs:
+            self._folder = os.path.dirname(os.path.abspath(outputs[0]))
+            self.open_btn.setVisible(True)
+        self.adjustSize()
+        if self.seconds > 0:
+            self._timer.start(int(self.seconds * 1000))
+
+    def failure(self, message: str, details: str = ""):
+        from . import theme
+        self.bar.setRange(0, 1)
+        self.bar.setValue(0)
+        self.text.setText(message)
+        self.text.setStyleSheet(f"color: {theme.error_color()};")
+        if details:
+            self.log.setPlainText(details)
+            self.log.setVisible(True)
+        self.adjustSize()
+
+    def enterEvent(self, ev):  # keep it open while the mouse is over it
+        self._timer.stop()
+        super().enterEvent(ev)
+
+    def closeEvent(self, ev):
+        self._timer.stop()
+        self.finished.emit()
+        super().closeEvent(ev)
+
+
+def _popup_seconds() -> float:
+    try:
+        return float(settings.get("popup_seconds"))
+    except (TypeError, ValueError):
+        return 6.0
+
+
+def wait_for(toast: Toast) -> None:
+    """Block (with a running event loop) until the toast is closed, then delete it."""
+    import shiboken6
+    loop = QtCore.QEventLoop()
+    toast.finished.connect(loop.quit)
+    loop.exec()
+    if shiboken6.isValid(toast):
+        shiboken6.delete(toast)
+
+
+def show_result(title: str, message: str, outputs=()) -> None:
+    """Pop-up with a finished result (used after a Ctrl+Enter run closes its window)."""
+    app()
+    t = Toast(title, _popup_seconds())
+    t.success(message, outputs)
+    t.show_corner()
+    wait_for(t)
+
+
+def explain_error(msg: str) -> str:
+    """Add a plain-language explanation to common error messages."""
+    low = msg.lower()
+    if "shape" in low and ("differ" in low or "broadcast" in low):
+        return msg + "\nThe images have different dimensions: resample one onto the other first."
+    if "no such file" in low or "not found" in low:
+        return msg + "\nCheck that the file still exists and that its name was not changed."
+    if "permission denied" in low:
+        return msg + "\nNiiCE cannot write in that folder: copy the images somewhere you own."
+    return msg
+
+
+def run_quick(title: str, task, running: str = "Running...", buttons=()) -> Optional[object]:
+    """Run task(report) at once, without a dialog, and show the outcome in a corner pop-up.
+
+    buttons: (label, callback(toast)) pairs added to the pop-up, e.g. 'Options...' or 'Swap'.
+    Returns the task's result (or None if it failed).
+    """
+    app()
+    toast = Toast(title, _popup_seconds())
+    for label, cb in buttons:
+        toast.add_button(label, lambda _=False, cb=cb: cb(toast))
+    toast.running(running)
+    report = Report()
+    report.progressed.connect(lambda f, m: m and toast.running(m))
+    log_lines: list[str] = []
+    report.logged.connect(log_lines.append)
+    worker = Worker(task, report)
+    outcome = {}
+
+    def ok(result):
+        outcome["result"] = result
+        outputs = [] if isinstance(result, str) else [r for r in (result or []) if isinstance(r, str)]
+        toast.success(result if isinstance(result, str) else saved_text(outputs), outputs)
+        if outputs and settings.get("open_folder_when_done"):
+            open_in_file_manager(outputs[0])
+
+    def failed(msg, tb):
+        toast.failure("Error: " + explain_error(msg), "\n".join(log_lines + [tb]))
+
+    worker.succeeded.connect(ok)
+    worker.failed.connect(failed)
+    toast.show_corner()
+    worker.start()
+    wait_for_worker_and_toast(worker, toast)
+    return outcome.get("result")
+
+
+def wait_for_worker_and_toast(worker, toast) -> None:
+    wait_for(toast)
+    if worker.isRunning():  # closed while running: let the work finish before exiting
+        worker.wait()
+
+
 def show_modal(window: QtWidgets.QDialog) -> int:
     """Show a window until it closes, then delete it.
 
@@ -601,8 +814,12 @@ def show_modal(window: QtWidgets.QDialog) -> int:
     window.raise_()
     window.activateWindow()
     result = window.exec()
+    quick = getattr(window, "quick_result", None)
+    title = getattr(window, "title", "NiiCE")
     if shiboken6.isValid(window):
         shiboken6.delete(window)
+    if quick:  # Ctrl+Enter run: the window closed itself, show where the results went
+        show_result(title, *quick)
     return result
 
 

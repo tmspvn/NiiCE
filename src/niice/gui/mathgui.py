@@ -27,7 +27,13 @@ ref_img          the reference image, as a nibabel image (ref_img.affine, ref_im
 result = ...     saved as 'Save as' (or just end with an expression)
 save(arr, 'name')   writes an extra image on the reference grid
 print(...)       shows in the log
-import ...       works as usual (e.g. from scipy import stats)"""
+import ...       works as usual (e.g. from scipy import stats)
+
+Examples:
+  a - b                       difference
+  np.mean(a, axis=1)          mean along the 2nd axis (axis=3: over time in 4D)
+  np.where(b > 0, a, 0)       a inside the mask b
+  a[b > 0].mean()             one number: mean of a inside b (shown, not saved)"""
 
 # Code block colours: always a dark panel so it reads as code in light and dark desktop themes
 CODE_BG, CODE_FG, GUTTER_BG, GUTTER_FG = "#16181f", "#e6e6e6", "#20232c", "#7f8596"
@@ -126,12 +132,14 @@ class MathDialog(ToolDialog):
         self.flist.changed.connect(self._check)
 
         self.code = CodeEdit()
-        self.code.setPlaceholderText("# e.g.\n(a - b) / b * 100\n\n# or several lines:\n"
+        self.code.setPlaceholderText("# e.g.\n(a - b) / b * 100\n\n# or a numpy function:\n"
+                                     "np.mean(a, axis=1)\n\n# or several lines:\n"
                                      "mask = b > 0\nresult = a * mask")
-        self.code.setPlainText(self.settings.get("math_code", ""))
+        if self.settings.get("math_remember_code"):
+            self.code.setPlainText(self.settings.get("math_code", ""))
         self.code.setMinimumHeight(220)
         self.code.textChanged.connect(self._check)
-        self.code.run_requested.connect(self.start)
+        self.code.run_requested.connect(self.run_and_close)  # Ctrl+Enter: compute, close on success
         lay.addWidget(self.code, 1)
 
         row = QtWidgets.QHBoxLayout()
@@ -164,7 +172,7 @@ class MathDialog(ToolDialog):
         self.space = Banner("info", "")
 
         first = self.files[0] if self.files else os.path.expanduser("~/x.nii.gz")
-        self.out = PathEdit(os.path.join(os.path.dirname(first), "result.nii.gz"), save=True)
+        self.out = PathEdit(os.path.join(os.path.dirname(first), "NiiCE_result.nii.gz"), save=True)
         form.addRow("Save as", self.out)
         self.ref = QtWidgets.QComboBox()
         form.addRow("Reference grid", self.ref)
@@ -176,7 +184,8 @@ class MathDialog(ToolDialog):
         lay.addWidget(self.space)
         self._refill_ref()
         self._check()
-        self.resize(680, 820)
+        self.panel.shortcut_hint.setText("Ctrl+Enter: compute and close")
+        self.resize(660, 700)
 
     def _refill_ref(self):
         cur = self.ref.currentIndex()
@@ -247,9 +256,10 @@ class MathDialog(ToolDialog):
     def start(self):
         if self.panel.running:
             return
-        s = settings.load()  # remember the code for next time
-        s["math_code"] = self.settings["math_code"] = self.code.toPlainText()
-        settings.save(s)
+        if self.settings.get("math_remember_code"):  # remember the code for next time
+            s = settings.load()
+            s["math_code"] = self.settings["math_code"] = self.code.toPlainText()
+            settings.save(s)
         super().start()
 
     def task(self, report):

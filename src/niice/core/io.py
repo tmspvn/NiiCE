@@ -10,16 +10,54 @@ import numpy as np
 NIFTI_EXTS = (".nii.gz", ".nii")
 
 
+def looks_like_nifti_name(path: str) -> bool:
+    """By name only: .nii, .nii.gz, and copies such as 'scan.nii (copy).gz' or 'scan (1).nii.gz'."""
+    low = os.path.basename(path).lower()
+    return low.endswith(NIFTI_EXTS) or (".nii" in low and low.endswith(".gz"))
+
+
+def sniff_nifti(path: str) -> bool:
+    """True if the file content is a NIfTI-1/2 image (gzip-compressed or not), whatever its name."""
+    import gzip
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2)
+        opener = gzip.open if head == b"\x1f\x8b" else open
+        with opener(path, "rb") as fh:
+            hdr = fh.read(540)
+    except (OSError, EOFError):
+        return False
+    if len(hdr) < 348:
+        return False
+    for endian in "<>":
+        size = struct.unpack(endian + "i", hdr[:4])[0]
+        if size == 348 and hdr[344:347] in (b"n+1", b"ni1"):
+            return True
+        if size == 540 and hdr[4:7] in (b"n+2", b"ni2"):
+            return True
+    return False
+
+
 def is_nifti(path: str) -> bool:
-    return path.lower().endswith(NIFTI_EXTS)
+    if path.lower().endswith(NIFTI_EXTS):
+        return True
+    return os.path.isfile(path) and sniff_nifti(path)
 
 
 def split_ext(path: str) -> tuple[str, str]:
-    """Split 'dir/sub.nii.gz' into ('dir/sub', '.nii.gz'); handles the double extension."""
+    """Split 'dir/sub.nii.gz' into ('dir/sub', '.nii.gz'); handles the double extension.
+
+    Odd copies are normalised: 'scan.nii (copy).gz' -> ('scan (copy)', '.nii.gz').
+    """
     low = path.lower()
     for ext in NIFTI_EXTS:
         if low.endswith(ext):
             return path[: -len(ext)], path[-len(ext):]
+    if low.endswith(".gz") and ".nii" in os.path.basename(low):
+        base = path[:-3]
+        i = base.lower().rfind(".nii")
+        return base[:i] + base[i + 4:], ".nii.gz"
     return os.path.splitext(path)
 
 
@@ -54,7 +92,22 @@ def out_path(src: str, suffix: str, ext: str = "same", outdir: Optional[str] = N
 
 
 def load(path: str):
-    return nib.load(path)
+    """nibabel image; also reads NIfTI files whose name nibabel cannot interpret."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No such file: {path}")
+    try:
+        return nib.load(path)
+    except (nib.filebasedimages.ImageFileError, OSError, EOFError, ValueError):
+        if not sniff_nifti(path):
+            raise ValueError(f"{os.path.basename(path)} is not a NIfTI image (or it is damaged)") from None
+    # Unusual name (e.g. 'scan.nii (copy).gz'): read the bytes and build the image directly
+    import gzip
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    cls = nib.Nifti2Image if raw[:4] in (b"\x1c\x02\x00\x00", b"\x00\x00\x02\x1c") else nib.Nifti1Image
+    return cls.from_bytes(raw)
 
 
 def load_data(img, dtype=np.float32) -> np.ndarray:

@@ -12,6 +12,8 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
+RECORD_EXT = ".niicereg"                 # file describing a registration (call + apply commands)
+RECORD_EXTS = (RECORD_EXT, ".details")  # .details: older NiiCE / neuro-nautilus files
 SCRIPTS = {"quick": "antsRegistrationSyNQuick.sh", "full": "antsRegistrationSyN.sh"}
 
 # -t option of antsRegistrationSyN[Quick].sh -> (label, stages, explanation)
@@ -97,7 +99,7 @@ def apply_command(moving: str, reference: str, out: str, transforms: Sequence[tu
 
 def details_text(reg_id: str, fixed: str, moving: str, prefix: str, transform: str,
                  command: Sequence[str]) -> str:
-    """Contents of coreg.<id>.details: what was run and how to apply the result."""
+    """Contents of coreg.<id>.niicereg: what was run and how to apply the result."""
     def q(parts):
         return " ".join(f'"{p}"' if " " in p else p for p in parts)
 
@@ -124,7 +126,7 @@ def details_text(reg_id: str, fixed: str, moving: str, prefix: str, transform: s
 
 
 def parse_details(path: str) -> dict:
-    """Read back a .details file written by NiiCE (or neuro-nautilus)."""
+    """Read back a .niicereg file (or an older .details file from NiiCE / neuro-nautilus)."""
     info = {}
     with open(path) as f:
         for line in f:
@@ -137,7 +139,8 @@ def parse_details(path: str) -> dict:
                 if m:
                     info["transform"] = m.group(1)
     if "prefix" not in info:  # neuro-nautilus files: prefix = path without "details"
-        info["prefix"] = path[: -len("details")]
+        ext = next((e for e in RECORD_EXTS if path.endswith(e)), "")
+        info["prefix"] = path[: len(path) - len(ext) + 1] if ext else path
     if "transform" not in info:
         info["transform"] = "s" if os.path.exists(info["prefix"] + "1Warp.nii.gz") else "a"
     return info

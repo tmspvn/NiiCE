@@ -238,7 +238,7 @@ class RegisterDialog(ToolDialog):
         self.fixed_card.set_path(fixed)
         self.moving_card.set_path(moving)
         if fixed and (changed_fixed or not self.outdir.path()):
-            self.outdir.setPath(os.path.join(os.path.dirname(os.path.abspath(fixed)), f"coreg.{self.reg_id}"))
+            self.outdir.setPath(os.path.join(os.path.dirname(os.path.abspath(fixed)), f"NiiCE.coreg.{self.reg_id}"))
         self._refresh()
 
     def _refresh(self, images=True):
@@ -255,7 +255,7 @@ class RegisterDialog(ToolDialog):
         outs = "".join(f"<br>&nbsp;&nbsp;<code>{os.path.basename(p)}</code> - {d}"
                        for p, d in ants.outputs(self.prefix(), t))
         self.outputs_label.setText(f"Files written to <code>{self.outdir.path()}</code>:{outs}"
-                                   f"<br>&nbsp;&nbsp;<code>coreg.{self.reg_id}.details</code> - "
+                                   f"<br>&nbsp;&nbsp;<code>coreg.{self.reg_id}{ants.RECORD_EXT}</code> - "
                                    "what was run + ready-made apply-transform commands")
         self.id_label.setText(f"Registration ID: {self.reg_id}")
         self.cmd.setText(" ".join(shlex.quote(c) for c in self.command()))
@@ -311,7 +311,7 @@ class RegisterDialog(ToolDialog):
         if ok:  # next run gets a fresh ID and folder
             self.reg_id = ants.new_id()
             self.outdir.setPath(os.path.join(os.path.dirname(os.path.abspath(self.fixed_path)),
-                                             f"coreg.{self.reg_id}"))
+                                             f"NiiCE.coreg.{self.reg_id}"))
 
     def _tick(self):
         self.panel.status.setText(self._status_text())
@@ -330,7 +330,7 @@ class RegisterDialog(ToolDialog):
         os.makedirs(self.outdir.path(), exist_ok=True)
         cmd = self.command()
         t = self.transform()
-        details = os.path.join(self.outdir.path(), f"coreg.{self.reg_id}.details")
+        details = os.path.join(self.outdir.path(), f"coreg.{self.reg_id}{ants.RECORD_EXT}")
         with open(details, "w") as f:
             f.write(ants.details_text(self.reg_id, self.fixed_path, self.moving_path, self.prefix(), t, cmd))
         self.progress = prog = ants.RegistrationProgress()
@@ -370,7 +370,7 @@ class ApplyDialog(ToolDialog):
 
     def build(self, lay):
         nifti = [f for f in self.files if io.is_nifti(f)]
-        details = [f for f in self.files if f.endswith(".details")]
+        details = [f for f in self.files if f.endswith(ants.RECORD_EXTS)]
         form = QtWidgets.QFormLayout()
         self.moving = PathEdit(nifti[0] if nifti else "", placeholder="image to transform")
         self.ref = PathEdit(nifti[1] if len(nifti) > 1 else "", placeholder="reference image (defines the output grid)")
@@ -381,8 +381,8 @@ class ApplyDialog(ToolDialog):
         box = QtWidgets.QGroupBox("Transforms")
         bl = QtWidgets.QVBoxLayout(box)
         load_row = QtWidgets.QHBoxLayout()
-        load = QtWidgets.QPushButton("Load from a registration...")
-        load.setToolTip("Pick a coreg.<id>.details file made by NiiCE or neuro-nautilus")
+        load = QtWidgets.QPushButton("Load from a registration (.niicereg)...")
+        load.setToolTip("Pick the .niicereg file written by Register (older .details files also work)")
         self.direction = QtWidgets.QComboBox()
         self.direction.addItems(["moving -> fixed (direct)", "fixed -> moving (inverse)"])
         load_row.addWidget(load)
@@ -484,8 +484,9 @@ class ApplyDialog(ToolDialog):
 
     def _load_details(self):
         start = os.path.dirname(self.moving.path())
-        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Registration details", start,
-                                                     "Registration details (*.details);;All files (*)")
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose the .niicereg file of a registration", start,
+            "NiiCE registration (*.niicereg);;Older registration details (*.details);;All files (*)")
         if p:
             try:
                 self._fill(ants.parse_details(p))

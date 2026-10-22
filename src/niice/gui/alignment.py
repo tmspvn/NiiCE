@@ -111,6 +111,8 @@ class AlignmentWindow(QtWidgets.QDialog):
         self.alpha.setRange(0, 100)
         self.alpha.setValue(50)
         self.alpha.setMaximumWidth(160)
+        self.alpha.setToolTip("Balance: left shows only the reference, right only the compared image, "
+                              "middle both")
         self.by = QtWidgets.QComboBox()
         self.by.addItem("World coordinates (use headers)", "world")
         self.by.addItem("Voxel indices (ignore headers)", "voxel")
@@ -118,7 +120,8 @@ class AlignmentWindow(QtWidgets.QDialog):
                            "of one image lies on voxel (i, j, k) of the other.")
         self.fov = QtWidgets.QCheckBox("Field-of-view outlines")
         self.fov.setChecked(True)
-        for w in (QtWidgets.QLabel("Display"), self.mode, self.alpha, QtWidgets.QLabel("Align by"),
+        for w in (QtWidgets.QLabel("Display"), self.mode, QtWidgets.QLabel("Reference"), self.alpha,
+                  QtWidgets.QLabel("Compared"), QtWidgets.QLabel("   Align by"),
                   self.by, self.fov):
             ctl.addWidget(w)
         ctl.addStretch(1)
@@ -195,11 +198,17 @@ class AlignmentWindow(QtWidgets.QDialog):
             v.clear()
             v.setText("computing...")
         by = self.by.currentData()
-        big = io.preview_skip_reason(ref, preview_limit()) or io.preview_skip_reason(mov, preview_limit())
-        if big:  # still shown (that is the point of this tool), just at a coarser resolution
-            self.legend.setText("Large image: displayed at reduced resolution.")
-        self._worker = Worker(lambda r: space.resample_pair(ref, mov, by=by, max_dim=128 if big else 192),
-                              Report())
+        for path in (ref, mov):
+            big = io.preview_skip_reason(path, preview_limit())
+            if big:  # do not load: it would be slow and use a lot of memory
+                self.pair = None
+                for v in self.views:
+                    v.setText("too big to load")
+                self.legend.setText(f"{os.path.basename(path)} is too big to load here: "
+                                    + big.replace("preview skipped: ", "") + ". Raise the limit in "
+                                    "Settings > General > Skip previews above.")
+                return
+        self._worker = Worker(lambda r: space.resample_pair(ref, mov, by=by, max_dim=192), Report())
         self._worker.succeeded.connect(self._loaded)
         self._worker.failed.connect(self._failed)
         self._worker.start()
@@ -255,7 +264,7 @@ class AlignmentWindow(QtWidgets.QDialog):
         p = self.pair
         idx = [s.value() for s in self.sliders]
         mode = self.mode.currentData()
-        self.alpha.setEnabled(mode == "blend")
+        self.alpha.setEnabled(mode != "checker")
         for axis, view in enumerate(self.views):
             r = space.plane(p["ref"], axis, idx[axis])
             m = space.plane(p["mov"], axis, idx[axis])

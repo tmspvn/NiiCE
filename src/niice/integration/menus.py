@@ -178,6 +178,11 @@ TOOLS = {tools!r}  # (tool id, menu path)
 NIFTI = (".nii", ".nii.gz")
 
 
+def _is_nifti_name(path):  # also copies such as "scan.nii (copy).gz"
+    low = path.rsplit("/", 1)[-1].lower()
+    return low.endswith(NIFTI) or (".nii" in low and low.endswith(".gz"))
+
+
 def _paths(files):
     out = []
     for f in files:
@@ -191,7 +196,7 @@ def _paths(files):
 class NiiCEMenu(GObject.GObject, {module}.MenuProvider):
     def get_file_items(self, *args):  # (files) in Nautilus 4, (window, files) before
         paths = _paths(args[-1])
-        if not any(p.lower().endswith(NIFTI) for p in paths):
+        if not any(_is_nifti_name(p) for p in paths):
             return []
         top = {module}.MenuItem(name="NiiCE::menu", label="NiiCE", tip="NIfTI tools")
         root = {module}.Menu()
@@ -247,7 +252,7 @@ def _remove_extension(name: str) -> None:
 
 # --------------------------------------------------------------------------- Thunar (XFCE)
 THUNAR_ID_PREFIX = "niice-"
-NIFTI_PATTERNS = "*.nii;*.nii.gz;*.NII;*.NII.GZ"
+NIFTI_PATTERNS = "*.nii;*.nii.gz;*.nii*.gz;*.NII;*.NII.GZ"
 
 
 def _thunar_uca_path() -> str:
@@ -371,6 +376,7 @@ MIME_XML = """<?xml version="1.0" encoding="UTF-8"?>
     <comment>Compressed NIfTI image</comment>
     <sub-class-of type="application/gzip"/>
     <glob pattern="*.nii.gz" weight="60"/>
+    <glob pattern="*.nii*.gz" weight="55"/>
   </mime-type>
 </mime-info>
 """

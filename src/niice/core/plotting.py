@@ -32,6 +32,7 @@ class GifOptions:
     fps: int = 25
     step: int = 1                   # use every n-th slice/volume
     layout: str = "horizontal"      # how several images are placed next to each other
+    max_voxels: Optional[int] = None  # preview: read every k-th voxel so one volume has <= this many
     extra: dict = field(default_factory=dict)
 
 
@@ -39,6 +40,17 @@ def _prepare(path: str, o: GifOptions):
     """Load an image as (data, zooms, crosshair_voxel) in display orientation."""
     img = load(path)
     xh = np.array(o.crosshair, float) if o.crosshair is not None else None
+    if o.max_voxels:
+        # Reduced copy for previews: every k-th voxel on each spatial axis, so that one volume has
+        # at most max_voxels voxels (k = cube root of the reduction needed, rounded up).
+        n = float(np.prod(img.shape[:3]))
+        k = int(np.ceil((n / o.max_voxels) ** (1 / 3))) if n > o.max_voxels else 1
+        if k > 1:
+            sl = (slice(None, None, k),) * 3 + (slice(None),) * (len(img.shape) - 3)
+            data = np.asanyarray(img.dataobj[sl]).astype(np.float32)
+            img = nib.Nifti1Image(data, img.affine @ np.diag([k, k, k, 1]))
+            if xh is not None:
+                xh = xh / k
     if o.reorient:
         can = nib.as_closest_canonical(img)
         if xh is not None:  # file voxel -> world -> canonical voxel
