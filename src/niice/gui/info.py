@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import csv
+import html
 import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import info as core
+from ..core import io, space
 from ..core.io import split_ext
-from .common import Report, Thumbs, Worker, app, hint, show_modal
+from .common import Banner, Report, Thumbs, Worker, app, hint, preview_limit, show_modal
 
 Qt = QtCore.Qt
 DIFF_COLOR = QtGui.QColor(255, 193, 7, 90)
@@ -70,6 +72,9 @@ class InfoWindow(QtWidgets.QDialog):
         top.addWidget(title, 1)
         top.addWidget(Thumbs(path, 96))
         lay.addLayout(top)
+        issue = space.qform_sform_issue(core.load(path))
+        if issue:
+            lay.addWidget(Banner("warning", "Header inconsistency", [issue]))
 
         tabs = QtWidgets.QTabWidget()
         lay.addWidget(tabs, 1)
@@ -99,12 +104,33 @@ class InfoWindow(QtWidgets.QDialog):
         row.addWidget(close)
         lay.addLayout(row)
 
-        # Statistics need to read all voxels: do it in the background
+        # Statistics read every voxel: run them in the background, and only on request for
+        # very large files (4x the preview limit), which could take long or need lots of memory.
+        self._worker = None
+        total = io.voxel_counts(path)[1]
+        limit = preview_limit()
+        if limit and total > 4 * limit * 1e6:
+            self.stats_label.setText(f"Large image ({total / 1e6:.0f} M voxels): statistics not computed.")
+            self.stats_btn = QtWidgets.QPushButton("Compute statistics")
+            self.stats_btn.clicked.connect(self._start_stats)
+            row.insertWidget(1, self.stats_btn)
+        else:
+            self._start_stats()
+
+    def _start_stats(self):
+        if getattr(self, "stats_btn", None):
+            self.stats_btn.setEnabled(False)
+        self.stats_label.setText("Computing intensity statistics...")
         self._report = Report()
-        self._worker = Worker(lambda r: core.intensity_stats(path), self._report)
+        self._worker = Worker(lambda r: core.intensity_stats(self.path), self._report)
         self._worker.succeeded.connect(self._add_stats)
         self._worker.failed.connect(lambda m, tb: self.stats_label.setText(f"Statistics failed: {m}"))
         self._worker.start()
+
+    def closeEvent(self, ev):
+        if self._worker and self._worker.isRunning():
+            self._worker.wait()  # let the statistics thread finish before the window goes away
+        super().closeEvent(ev)
 
     def _add_stats(self, stats):
         t = self.summary
@@ -139,6 +165,16 @@ class CompareWindow(QtWidgets.QDialog):
         thumbs.addStretch(1)
         lay.addLayout(thumbs)
 
+        # Are the images in the same affine space? (each one compared with the first)
+        banner_row = QtWidgets.QHBoxLayout()
+        self.space_banner = Banner(*space_summary(paths))
+        banner_row.addWidget(self.space_banner, 1)
+        vis = QtWidgets.QPushButton("Visualise alignment...")
+        vis.setToolTip("Overlay the images in world coordinates (Plot > Visualise alignment)")
+        vis.clicked.connect(self._visualise)
+        banner_row.addWidget(vis, 0, Qt.AlignTop)
+        lay.addLayout(banner_row)
+
         rows, differs = core.compare(paths)
         self.differs = differs
         names = [os.path.basename(p) for p in paths]
@@ -172,10 +208,38 @@ class CompareWindow(QtWidgets.QDialog):
         lay.addLayout(row)
         self._filter(self.only.isChecked())
 
+    def _visualise(self):
+        from .alignment import AlignmentWindow
+        w = AlignmentWindow(self.paths, parent=self)
+        w.exec()
+
     def _filter(self, only):
         for r, d in enumerate(self.differs):
             self.table.setRowHidden(r, bool(only and not d))
         self.table.resizeRowsToContents()
+
+
+def space_summary(paths):
+    """(level, title, lines) for a Banner describing whether the images share one space."""
+    results = space.compare_paths(paths)
+    ref = html.escape(os.path.basename(paths[0]))
+    worst = max((r.level for _, r in results), key=["same", "grid", "warning"].index)
+    if worst == "same":
+        n = "Both" if len(paths) == 2 else f"All {len(paths)}"
+        return "same", f"{n} images are on the same voxel grid (same dimensions and affine).", []
+    title = ("Images are NOT in the same affine space" if worst == "warning"
+             else "Images are on different voxel grids")
+    lines = []
+    for p, r in results:
+        name = html.escape(os.path.basename(p))
+        if r.same_grid:
+            lines.append(f"{name}: same grid as {ref}")
+            continue
+        detail = "; ".join(html.escape(i) for i in r.issues)
+        ov = f" Field-of-view overlap {100 * r.overlap:.0f}%." if r.level != "same" else ""
+        lines.append(f"<b>{name}</b> vs {ref}: {html.escape(r.summary)}{ov}"
+                     + (f"<br>&nbsp;&nbsp;&nbsp;<span style='font-size:9pt'>{detail}</span>" if detail else ""))
+    return worst, title, lines
 
 
 def run(files):

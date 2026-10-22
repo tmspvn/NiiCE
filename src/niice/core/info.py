@@ -181,6 +181,12 @@ def text_report(paths: list[str]) -> str:
         for k, v in header_fields(load(paths[0])).items():
             lines.append(f"{k:<16} {fmt(v)}")
         return "\n".join(lines)
+    from .space import compare_paths
+    for p, r in compare_paths(paths):
+        flag = {"same": "OK  ", "grid": "NOTE", "warning": "WARN"}[r.level]
+        lines.append(f"[{flag}] {os.path.basename(p)} vs {os.path.basename(paths[0])}: {r.summary}")
+        lines.extend(f"       - {i}" for i in r.issues)
+    lines.append("")
     rows, differs = compare(paths)
     names = [os.path.basename(p) for p in paths]
     lines.append("Fields that differ (* = differs):")

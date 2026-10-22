@@ -342,7 +342,9 @@ class FileList(QtWidgets.QListWidget):
         self.model().rowsMoved.connect(lambda *a: self._relabel())
         for f in files:
             self.add(f)
-        self.setMaximumHeight(max(70, min(220, 26 * (len(files) + 1))))
+        height = max(70, min(220, 26 * (len(files) + 1)))
+        self.setMinimumHeight(min(height, 130))
+        self.setMaximumHeight(height)
 
     def add(self, path: str):
         it = QtWidgets.QListWidgetItem(os.path.basename(path))
@@ -440,6 +442,45 @@ class PathEdit(QtWidgets.QWidget):
         self.edit.setText(p)
 
 
+BANNER_COLOURS = {  # background, border
+    "same": ("rgba(46,125,50,0.12)", "#2e7d32"),
+    "ok": ("rgba(46,125,50,0.12)", "#2e7d32"),
+    "grid": ("rgba(21,101,192,0.12)", "#1565c0"),
+    "info": ("rgba(21,101,192,0.12)", "#1565c0"),
+    "warning": ("rgba(255,160,0,0.18)", "#ef6c00"),
+}
+
+
+class Banner(QtWidgets.QLabel):
+    """Coloured message box: level 'ok'/'same' green, 'info'/'grid' blue, 'warning' amber."""
+
+    def __init__(self, level: str = "info", title: str = "", lines=(), parent=None):
+        super().__init__(parent)
+        self.setWordWrap(True)
+        self.setTextFormat(Qt.RichText)
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.set(level, title, lines)
+
+    def set(self, level: str, title: str, lines=()):
+        bg, border = BANNER_COLOURS.get(level, BANNER_COLOURS["info"])
+        self.setStyleSheet(f"QLabel {{ background: {bg}; border: 1px solid {border}; "
+                           "border-radius: 6px; padding: 6px 8px; }")
+        icon = "&#9888; " if level == "warning" else ""
+        body = "".join(f"<br>&bull; {line}" for line in lines)
+        self.setText(f"<b>{icon}{title}</b>{body}")
+        self.setVisible(bool(title))
+        if title:
+            QtCore.QTimer.singleShot(0, self._grow_window)
+
+    def _grow_window(self):
+        """Make the window taller if the message no longer fits (never shrinks it)."""
+        w = self.window()
+        if w is not None and w.isVisible():
+            need = w.sizeHint().height()
+            if w.height() < need:
+                w.resize(w.width(), need)
+
+
 def hline() -> QtWidgets.QFrame:
     f = QtWidgets.QFrame()
     f.setFrameShape(QtWidgets.QFrame.HLine)
@@ -464,16 +505,16 @@ def to_qimage(arr: np.ndarray) -> QtGui.QImage:
 
 
 def ortho_slices(path_or_img, size: int = 120) -> list[np.ndarray]:
-    """Three middle slices (sagittal, coronal, axial) of the first volume, uint8, RAS-upright."""
+    """Three middle slices (sagittal, coronal, axial) of the first volume, uint8, RAS-upright.
+
+    Only every k-th voxel is read (k chosen so the longest axis has ~2x `size` voxels), which
+    keeps memory and time low for large images.
+    """
     import nibabel as nib
     from scipy.ndimage import zoom
-    img = io.load(path_or_img) if isinstance(path_or_img, str) else path_or_img
-    img = nib.as_closest_canonical(img)
-    obj = img.dataobj
-    vol = np.asanyarray(obj[..., 0] if len(img.shape) > 3 else obj).astype(np.float32)
-    while vol.ndim > 3:
-        vol = vol[..., 0]
-    vol = np.nan_to_num(vol)
+    data, aff = io.load_strided(path_or_img, max_dim=2 * size)
+    img = nib.as_closest_canonical(nib.Nifti1Image(data, aff))
+    vol = np.asanyarray(img.dataobj)
     nz = vol[vol != 0]
     lo, hi = (np.percentile(nz, [1, 99]) if nz.size else (0, 1))
     vol = np.clip((vol - lo) / max(hi - lo, 1e-6), 0, 1)
@@ -490,8 +531,12 @@ def ortho_slices(path_or_img, size: int = 120) -> list[np.ndarray]:
     return out
 
 
+def preview_limit() -> float:
+    return float(settings.get("preview_max_mvox") or 0)
+
+
 class Thumbs(QtWidgets.QWidget):
-    """Row of three orthogonal thumbnails for an image."""
+    """Row of three orthogonal thumbnails for an image (skipped for very large images)."""
 
     def __init__(self, path: str = "", size: int = 110, parent=None):
         super().__init__(parent)
@@ -504,21 +549,30 @@ class Thumbs(QtWidgets.QWidget):
             lbl = QtWidgets.QLabel()
             lbl.setFixedSize(size, size)
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet("background: black; border-radius: 4px;")
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("background: black; color: #aaa; border-radius: 4px; font-size: 8pt;")
             lay.addWidget(lbl)
             self.labels.append(lbl)
         if path:
             self.set_path(path)
 
+    def _placeholder(self, text: str, tip: str):
+        for lbl in self.labels:
+            lbl.clear()
+        self.labels[0].setText(text)
+        self.setToolTip(tip)
+
     def set_path(self, path: str):
         try:
+            reason = io.preview_skip_reason(path, preview_limit())
+            if reason:
+                self._placeholder("too large\nfor preview", reason)
+                return
             for lbl, arr in zip(self.labels, ortho_slices(path, self.size_px)):
                 lbl.setPixmap(QtGui.QPixmap.fromImage(to_qimage(arr)))
+            self.setToolTip("")
         except Exception as exc:  # unreadable image: show why instead of crashing
-            for lbl in self.labels:
-                lbl.clear()
-            self.labels[0].setText("?")
-            self.setToolTip(str(exc))
+            self._placeholder("?", str(exc))
 
 
 def show_modal(window: QtWidgets.QDialog) -> int:

@@ -269,3 +269,80 @@ def test_ants_streaming_with_fake_script(tmp_path, monkeypatch):
     p = ants.RegistrationProgress()
     assert run_streaming(cmd, p.feed) == 0
     assert p.stage == 2
+
+
+# --------------------------------------------------------------------------- spaces / alignment
+from niice.core import space
+
+
+def test_space_compare_levels(t1, tmp_path):
+    a = nib.load(t1)
+    data = a.get_fdata()
+    assert space.compare(a, a).level == "same"
+    # same world space, half resolution -> 'grid'
+    half = ops.resample(t1, str(tmp_path / "half.nii.gz"), "spacing", [2, 2, 4])
+    r = space.compare(a, nib.load(half))
+    assert r.level == "grid" and any("Voxel size" in i for i in r.issues) and r.overlap > 0.95
+    # same shape, shifted affine -> warning (the voxel-wise math trap)
+    aff = a.affine.copy()
+    aff[:3, 3] += [3, 0, 0]
+    r = space.compare(a, nib.Nifti1Image(data, aff))
+    assert r.level == "warning" and "Same dimensions" in r.summary
+    # far away -> no overlap
+    aff[:3, 3] += [500, 0, 0]
+    r = space.compare(a, nib.Nifti1Image(data, aff))
+    assert r.level == "warning" and r.overlap == 0
+    # rotated grid is reported
+    rot = np.eye(4)
+    th = np.radians(10)
+    rot[:2, :2] = [[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]]
+    r = space.compare(a, nib.Nifti1Image(data, rot @ a.affine))
+    assert any("rotated by 10.0" in i for i in r.issues)
+    # flipped axis order (LAS vs RAS) is not reported as a rotation
+    flip = a.affine @ np.array([[-1, 0, 0, 9], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+    r = space.compare(a, nib.Nifti1Image(data[::-1], flip))
+    assert any("ordered differently" in i for i in r.issues) and not any("rotated" in i for i in r.issues)
+    assert r.level == "warning"  # same shape, different affine
+
+
+def test_qform_sform_issue(t1):
+    img = nib.load(t1)
+    img.set_qform(img.affine, 1)
+    img.set_sform(img.affine, 1)
+    assert space.qform_sform_issue(img) is None
+    shifted = img.affine.copy()
+    shifted[0, 3] += 5
+    img.set_sform(shifted, 1)
+    assert "disagree" in space.qform_sform_issue(img)
+
+
+def test_resample_pair_world_and_voxel(t1, tmp_path):
+    a = nib.load(t1)
+    aff = a.affine.copy()
+    aff[:3, 3] += [4, 0, 0]  # shift by 4 mm along x
+    moved = make(tmp_path / "moved.nii.gz", a.get_fdata().astype(np.float32), affine=aff)
+    world = space.resample_pair(t1, moved, by="world")
+    voxel = space.resample_pair(t1, moved, by="voxel")
+    # in voxel mode the arrays coincide exactly, in world mode they are 4 voxels apart
+    assert np.allclose(voxel["ref"], voxel["mov"], atol=1e-5)
+    assert not np.allclose(world["ref"], world["mov"], atol=1e-2)
+    # the union grid is wider than the reference by the shift
+    assert world["ref"].shape[0] == a.shape[0] + 4
+    rgb = space.composite(space.plane(world["ref"], 2, 4), space.plane(world["mov"], 2, 4), "checker",
+                          ref_fov=space.plane(world["ref_fov"], 2, 4))
+    assert rgb.shape[-1] == 3 and rgb.max() <= 1
+
+
+def test_preview_guard(t1):
+    assert io.preview_skip_reason(t1, 64) is None
+    assert "preview skipped" in io.preview_skip_reason(t1, 0.0001)
+    assert io.preview_skip_reason(t1, 0) is None  # 0 = no limit
+    data, aff = io.load_strided(t1, max_dim=4)
+    assert max(data.shape) <= 4 and aff[0, 0] == 3  # every 3rd voxel of 10 -> 4 voxels
+
+
+def test_text_report_mentions_space(t1, tmp_path):
+    aff = nib.load(t1).affine.copy()
+    aff[:3, 3] += 50
+    other = make(tmp_path / "o2.nii.gz", np.zeros(nib.load(t1).shape, np.float32), affine=aff)
+    assert "[WARN]" in info.text_report([t1, other])

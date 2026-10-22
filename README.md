@@ -8,7 +8,7 @@ Right-click a NIfTI file (`.nii` / `.nii.gz`) in your file manager and get quick
 | **Math** | Voxel-wise numpy expression between images, which are named `a`, `b`, `c`… Live syntax check, examples, single-number results are displayed instead of saved. | — |
 | **Operations ▸** Binarise, Threshold, Extract ROI, Extract volume, Resample, Subtract | Plain numpy/scipy implementations (no FSL needed). Batch over all selected files. | — |
 | **Operations ▸** Skull strip (SynthStrip) | FreeSurfer SynthStrip brain extraction. | Docker, Podman, Apptainer *or* FreeSurfer ≥ 7.3 |
-| **Plot ▸** Make GIF, Histogram | Animated GIF with live preview; interactive histogram with optional mask and statistics. | — |
+| **Plot ▸** Make GIF, Histogram, Visualise alignment | Animated GIF with live preview; interactive histogram with optional mask and statistics; overlay of two images in world space with a same-space check. | — |
 | **Registration ▸** Register, Apply transforms | ANTs `antsRegistrationSyN[Quick].sh` with an overview of what will happen, a starting-overlap preview and a progress bar; `antsApplyTransforms` with ready-made direct/inverse chains. | ANTs |
 | **Settings** | Choose which tools appear in the menu, general options, plugins, which file managers get the menu. | — |
 
@@ -50,6 +50,22 @@ background), full header with what each field means. Several images: one column 
 differing rows highlighted, *show only differences* toggle. Numbers are compared with a tolerance
 (`np.allclose`, relative 1e-5), so float rounding in the affine is not reported as a difference.
 Copy or export to CSV.
+
+**Same affine space?** With several images a banner on top says whether they are on the same voxel
+grid (each image compared with the first):
+
+* green: same dimensions and affine, so voxel (i, j, k) is the same place in every image;
+* blue: same world space, different grid (e.g. 1 mm T1 and 2 mm fMRI of one session). Viewers align
+  them, but voxel-wise tools need *Resample → Match a reference image* first;
+* amber warning: the fields of view barely or never overlap (not registered, or a broken header),
+  **same dimensions but different affines** (voxel-wise math would run without error yet combine
+  different locations), or one image is labelled as template space and the other is not.
+
+The banner lists what differs: dimensions, voxel size, axis order (e.g. RAS vs LAS), rotation between
+the grids in degrees, distance between the centres of the fields of view, and how much of the
+smaller field of view overlaps. *Visualise alignment…* opens the overlay below. A single image gets
+a warning when its own qform and sform disagree, because then different programs place it
+differently. Math and Subtract show the same warning when their inputs are not on one grid.
 
 ### Math
 Images are `a`, `b`, … in list order (drag to reorder). Any `np.<function>` works, plus bare
@@ -93,6 +109,16 @@ overwritten silently: a `_1`, `_2`… is appended (or you are asked, when you ty
   mask (any selected image or a file). Bin count defaults to the Freedman–Diaconis rule
   (bin width = 2·IQR·N^(−1/3), where IQR is the inter-quartile range and N the number of voxels).
   Table of N, mean, SD, percentiles. Save the figure from the toolbar.
+* **Visualise alignment** — select two or more images (the first is the reference). Shows the
+  same-space verdict, then sagittal/coronal/axial views of both images resampled onto one grid
+  that covers *both* fields of view, so an image lying outside the other is still visible. Display
+  as colour overlay (reference magenta, other image green; grey/white where both are bright, colour
+  fringes where they are not), checkerboard, edges of the second image on the first, or a blend
+  slider. Outlines show each field of view. Click a view to move the other two slices; the
+  position is shown in mm. *Align by*: **world coordinates** places each image by its header (what
+  viewers and ANTs see); **voxel indices** ignores the headers and puts voxel (i, j, k) on
+  voxel (i, j, k), which is what voxel-wise math assumes. If the images match in one mode but not
+  the other, the header is the problem, not the data.
 
 ### Registration (ANTs)
 Select the fixed image first and the moving image second (or swap in the dialog). Before
@@ -133,12 +159,19 @@ detected and transformed volume by volume (`-e 3`). Selecting an image together 
 
 * **Tools** — tick/untick each tool (built-ins and plugins); shows missing requirements (e.g. ANTs).
 * **General** — output format (`same`/`.nii.gz`/`.nii`), open folder when done, default ANTs threads,
-  SynthStrip backend/image, Docker via pkexec.
+  preview size limit, SynthStrip backend/image, Docker via pkexec.
 * **Plugins** — plugin folder, *Create example*, *Reload*, and load errors (a broken plugin never
   breaks the other tools).
 * **Context menu** — which file managers get the menu.
 
 *Save & update menu* rewrites the menu entries so they match the enabled tools.
+
+**Large images.** Thumbnails, the GIF live preview and the registration overlap preview are skipped
+for images above *Skip previews above* (default 64 million voxels per 3D volume, about
+400 × 400 × 400; a 4D GIF preview counts all volumes). The tools themselves still work. Info only
+computes intensity statistics after a click when an image has more than 4× that many voxels.
+Previews that are drawn read every k-th voxel only (k chosen from the preview size), so even large
+images stay light on memory.
 Settings are stored in `~/.config/niice/settings.json` (Windows: `%APPDATA%\niice`).
 
 ## Plugins

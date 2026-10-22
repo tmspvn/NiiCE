@@ -6,8 +6,8 @@ import os
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..core import io, mathexpr
-from .common import PathEdit, ToolDialog, ask, file_list_with_buttons, hint, run_dialog
+from ..core import io, mathexpr, space
+from .common import Banner, PathEdit, ToolDialog, ask, file_list_with_buttons, hint, run_dialog
 
 Qt = QtCore.Qt
 
@@ -46,16 +46,19 @@ class MathDialog(ToolDialog):
         form.addRow("Expression", row)
         self.check_label = QtWidgets.QLabel(" ")
         form.addRow("", self.check_label)
+        self.space = Banner("info", "")
 
         first = self.files[0] if self.files else os.path.expanduser("~/x.nii.gz")
         self.out = PathEdit(os.path.join(os.path.dirname(first), "result.nii.gz"), save=True)
         form.addRow("Save as", self.out)
         self.ref = QtWidgets.QComboBox()
         form.addRow("Reference grid", self.ref)
+        self.ref.currentIndexChanged.connect(lambda *_: self._check())
         self.dtype = QtWidgets.QComboBox()
         self.dtype.addItems(DTYPES)
         form.addRow("Output type", self.dtype)
         lay.addLayout(form)
+        lay.addWidget(self.space)
 
         helpers = ", ".join(sorted(mathexpr.HELPERS))
         lay.addWidget(hint(
@@ -68,16 +71,19 @@ class MathDialog(ToolDialog):
 
     def _refill_ref(self):
         cur = self.ref.currentIndex()
+        self.ref.blockSignals(True)  # refilling must not re-trigger _check
         self.ref.clear()
         for i, p in enumerate(self.flist.paths()[:26]):
             self.ref.addItem(f"{chr(97 + i)}  ({os.path.basename(p)})")
         self.ref.setCurrentIndex(max(0, min(cur, self.ref.count() - 1)))
+        self.ref.blockSignals(False)
 
     def _check(self):
         if self.ref.count() != self.flist.count():
             self._refill_ref()
         try:
             used = mathexpr.validate(self.expr.text(), self.flist.count())
+            self._check_grids(used)
             self.check_label.setText("OK - uses " + ", ".join(used))
             self.check_label.setStyleSheet("color: #2e7d32;")
             return True
@@ -85,6 +91,29 @@ class MathDialog(ToolDialog):
             self.check_label.setText(str(e) if self.expr.text().strip() else " ")
             self.check_label.setStyleSheet("color: #c62828;")
             return False
+
+    def _check_grids(self, used):
+        """Warn when the images in the expression are not on the reference image's voxel grid."""
+        paths = self.flist.paths()
+        ref_i = max(self.ref.currentIndex(), 0)
+        key = (tuple(paths), tuple(used), ref_i)
+        if key == getattr(self, "_grid_key", None):
+            return
+        self._grid_key = key
+        ref = io.load(paths[ref_i])
+        bad = []
+        for letter in used:
+            i = ord(letter) - 97
+            if i != ref_i:
+                r = space.compare(ref, io.load(paths[i]))
+                if not r.same_grid:
+                    bad.append(f"{letter} ({os.path.basename(paths[i])}): " + "; ".join(r.issues[:3]))
+        if bad:
+            self.space.set("warning", f"Not on the voxel grid of the reference ({chr(97 + ref_i)}): "
+                                      "voxels would be combined by index, not by location. Resample first.",
+                           bad)
+        else:
+            self.space.set("info", "")
 
     def validate(self):
         if self.flist.count() == 0:

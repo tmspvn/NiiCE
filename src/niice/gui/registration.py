@@ -10,62 +10,39 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from scipy import ndimage
 
-from ..core import ants, io
+from ..core import ants, io, space
 from ..core.proc import run_streaming
-from .common import (PathEdit, Report, Thumbs, ToolDialog, Worker, error, hint, run_dialog,
-                     to_qimage)
+from .common import (PathEdit, Report, Thumbs, ToolDialog, Worker, error, hint, preview_limit,
+                     run_dialog, to_qimage)
 
 Qt = QtCore.Qt
 
 
 # --------------------------------------------------------------------------- overlap preview
-def _first_volume(img):
-    data = np.asanyarray(img.dataobj[..., 0] if len(img.shape) > 3 else img.dataobj)
-    while data.ndim > 3:
-        data = data[..., 0]
-    return np.nan_to_num(data.astype(np.float32))
-
-
-def _norm(x):
-    nz = x[x != 0]
-    if not nz.size:
-        return np.zeros_like(x)
-    lo, hi = np.percentile(nz, [1, 99])
-    return np.clip((x - lo) / max(hi - lo, 1e-6), 0, 1)
-
-
 def overlap_image(fixed: str, moving: str, size: int = 150) -> np.ndarray:
     """Three orthogonal slices: fixed in magenta, moving in green, both placed by their headers.
 
-    The moving image is resampled into a coarse copy of the fixed grid using only the
-    voxel-to-world matrices (no registration), which is the starting point ANTs sees.
-    Where they overlap well the picture looks grey/white; misplacement shows as colour fringes.
+    No registration is applied: this is the starting point ANTs sees. Where the images overlap
+    well the picture looks grey/white; misplacement shows as colour fringes. The display grid
+    covers both fields of view, so an image lying completely outside the other is still visible.
     """
-    f_img = nib.as_closest_canonical(io.load(fixed))
-    m_img = io.load(moving)
-    f = _first_volume(f_img)
-    factor = max(1, int(np.ceil(max(f.shape) / 128)))
-    f = f[::factor, ::factor, ::factor]
-    grid = f_img.affine @ np.diag([factor, factor, factor, 1])
-    m = np.linalg.inv(m_img.affine) @ grid  # coarse fixed voxel -> moving voxel
-    mov = ndimage.affine_transform(_first_volume(m_img), m[:3, :3], offset=m[:3, 3],
-                                   output_shape=f.shape, order=1)
-    f, mov = _norm(f), _norm(mov)
-    zooms = np.array(f_img.header.get_zooms()[:3]) * factor
-    c = [s // 2 for s in f.shape]
+    pair = space.resample_pair(fixed, moving, by="world", max_dim=128)
+    ref_vol = pair["ref"]
+    # slice through the centre of the fixed image
+    c = np.linalg.inv(pair["affine"]) @ np.r_[space.centre(io.load(fixed).shape, io.load(fixed).affine), 1]
+    c = [int(np.clip(round(v), 0, n - 1)) for v, n in zip(c[:3], ref_vol.shape)]
     panels = []
-    for sl_f, sl_m, (rz, cz) in (
-        (f[c[0]], mov[c[0]], (zooms[2], zooms[1])),
-        (f[:, c[1]], mov[:, c[1]], (zooms[2], zooms[0])),
-        (f[:, :, c[2]], mov[:, :, c[2]], (zooms[1], zooms[0])),
-    ):
-        a, b = np.flipud(sl_f.T), np.flipud(sl_m.T)
-        k = size / max(a.shape[0] * rz, a.shape[1] * cz)
-        a, b = ndimage.zoom(a, (k * rz, k * cz), order=1), ndimage.zoom(b, (k * rz, k * cz), order=1)
-        rgb = np.stack([a, b, a], axis=-1)  # R,B = fixed (magenta), G = moving (green)
+    for axis in range(3):
+        rgb = space.composite(space.plane(ref_vol, axis, c[axis]), space.plane(pair["mov"], axis, c[axis]),
+                              "overlay", ref_fov=space.plane(pair["ref_fov"], axis, c[axis]),
+                              mov_fov=space.plane(pair["mov_fov"], axis, c[axis]))
+        rz, cz = space.plane_zooms(pair["zooms"], axis)
+        k = size / max(rgb.shape[0] * rz, rgb.shape[1] * cz)
+        rgb = ndimage.zoom(rgb, (k * rz, k * cz, 1), order=1)
         panel = np.zeros((size, size, 3), np.float32)
-        y0, x0 = (size - rgb.shape[0]) // 2, (size - rgb.shape[1]) // 2
-        panel[y0:y0 + rgb.shape[0], x0:x0 + rgb.shape[1]] = rgb[:size, :size]
+        h, w = min(size, rgb.shape[0]), min(size, rgb.shape[1])
+        y0, x0 = (size - h) // 2, (size - w) // 2
+        panel[y0:y0 + h, x0:x0 + w] = rgb[:h, :w]
         panels.append(panel)
     gap = np.zeros((size, 4, 3), np.float32)
     out = np.concatenate([panels[0], gap, panels[1], gap, panels[2]], axis=1)
@@ -291,6 +268,11 @@ class RegisterDialog(ToolDialog):
         if getattr(self, "_overlap_key", None) == key:
             return
         self._overlap_key = key
+        reason = io.preview_skip_reason(self.fixed_path, preview_limit()) or \
+            io.preview_skip_reason(self.moving_path, preview_limit())
+        if reason:
+            self.overlap.setText(reason)
+            return
         self.overlap.setText("computing...")
         rep = Report()
         w = Worker(lambda r, k=key: (k, overlap_image(*k)), rep)

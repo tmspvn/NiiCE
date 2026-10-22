@@ -92,6 +92,15 @@ class SettingsWindow(QtWidgets.QDialog):
         self.threads.setRange(1, os.cpu_count() or 1)
         self.threads.setValue(min(int(self.s.get("ants_threads", 3)), self.threads.maximum()))
         form.addRow("ANTs threads (default)", self.threads)
+        self.preview = QtWidgets.QSpinBox()
+        self.preview.setRange(0, 100000)
+        self.preview.setSuffix(" M voxels")
+        self.preview.setSpecialValueText("no limit")
+        self.preview.setValue(int(self.s.get("preview_max_mvox", 64)))
+        form.addRow("Skip previews above", self.preview)
+        form.addRow("", hint("Thumbnails, GIF and overlap previews are not drawn for images with more "
+                             "voxels than this (the tools still work). Intensity statistics in Info "
+                             "wait for a click above 4x this size."))
         self.backend = QtWidgets.QComboBox()
         found = synthstrip.available_backends()
         self.backend.addItem("auto", "auto")
@@ -204,6 +213,7 @@ class SettingsWindow(QtWidgets.QDialog):
         self.s["output_ext"] = self.ext.currentText()
         self.s["open_folder_when_done"] = self.open_folder.isChecked()
         self.s["ants_threads"] = self.threads.value()
+        self.s["preview_max_mvox"] = self.preview.value()
         self.s["synthstrip_backend"] = self.backend.currentData()
         self.s["synthstrip_image"] = self.image.text().strip() or synthstrip.DEFAULT_IMAGE
         self.s["docker_pkexec"] = self.pkexec.isChecked()

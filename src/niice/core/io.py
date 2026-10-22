@@ -93,3 +93,46 @@ def save_like(data: np.ndarray, ref, path: str, dtype=None) -> str:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     nib.save(out, path)
     return path
+
+
+# --------------------------------------------------------------------------- preview safety
+DEFAULT_PREVIEW_MVOX = 64  # million voxels; ~400 x 400 x 400
+
+
+def voxel_counts(path_or_img) -> tuple[int, int]:
+    """(voxels in one 3D volume, voxels in the whole file), from the header only."""
+    img = load(path_or_img) if isinstance(path_or_img, str) else path_or_img
+    shape = img.shape
+    per_volume = int(np.prod(shape[:3]))
+    return per_volume, int(np.prod(shape)) if len(shape) else 0
+
+
+def preview_skip_reason(path_or_img, limit_mvox: float = DEFAULT_PREVIEW_MVOX,
+                        all_volumes: bool = False):
+    """Why a preview should be skipped (too many voxels to read quickly), or None if it is fine.
+
+    all_volumes=False: the preview reads one 3D volume (thumbnails, overlays).
+    all_volumes=True: it reads every volume (GIF preview of a 4D series).
+    """
+    if not limit_mvox or limit_mvox <= 0:
+        return None
+    per_volume, total = voxel_counts(path_or_img)
+    n = total if all_volumes else per_volume
+    if n > limit_mvox * 1e6:
+        return f"preview skipped: {n / 1e6:.0f} M voxels > limit {limit_mvox:g} M (see Settings)"
+    return None
+
+
+def load_strided(img, max_dim: int = 256, volume: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """One 3D volume, reading only every k-th voxel so that no axis exceeds `max_dim`.
+
+    Returns (float32 data, affine of the strided grid). Taking every k-th voxel along an axis
+    multiplies that affine column by k; the first voxel stays where it was.
+    """
+    img = load(img) if isinstance(img, str) else img
+    k = max(1, int(np.ceil(max(img.shape[:3]) / max_dim)))
+    sl = (slice(None, None, k),) * 3
+    if len(img.shape) > 3:
+        sl = sl + (volume,) + (0,) * (len(img.shape) - 4)
+    data = np.nan_to_num(np.asanyarray(img.dataobj[sl]).astype(np.float32))
+    return data, img.affine @ np.diag([k, k, k, 1])

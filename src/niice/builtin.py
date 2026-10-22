@@ -28,6 +28,8 @@ for t in [
          description="Animated GIF sweeping through slices (3D) or time (4D)."),
     Tool("plot.histogram", "Plot/Histogram", "niice.gui.plot:histogram", order=2,
          description="Histogram of voxel intensities, optionally within a mask."),
+    Tool("plot.alignment", "Plot/Visualise alignment", "niice.gui.alignment:run", order=3, min_files=2,
+         description="Overlay two images in world space and check they share the same affine space."),
 
     Tool("reg.register", "Registration/Register (ANTs)", "niice.gui.registration:register", order=1,
          max_files=2, requires=ANTS[:2],

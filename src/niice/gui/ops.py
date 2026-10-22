@@ -6,9 +6,9 @@ import shutil
 
 from PySide6 import QtCore, QtWidgets
 
-from ..core import io, ops, synthstrip
+from ..core import io, ops, space, synthstrip
 from ..core.proc import run_streaming
-from .common import PathEdit, ToolDialog, ask, file_list_with_buttons, hint, run_dialog
+from .common import Banner, PathEdit, ToolDialog, ask, file_list_with_buttons, hint, run_dialog
 
 Qt = QtCore.Qt
 
@@ -391,6 +391,8 @@ class SubtractDialog(ToolDialog):
         self.out = PathEdit(save=True)
         form.addRow("Save as", self.out)
         lay.addLayout(form)
+        self.space = Banner("info", "")
+        lay.addWidget(self.space)
         self.a.changed.connect(self._names)
         self.b.changed.connect(self._names)
         self._names()
@@ -405,6 +407,14 @@ class SubtractDialog(ToolDialog):
         self.formula.setText(f"{io.stem(a) or 'A'}  -  {io.stem(b) or 'B'}")
         if a and b:
             self.out.setPath(self.out_name(a, f"_minus_{io.stem(b)}"))
+        self.space.set("info", "")
+        if os.path.isfile(a) and os.path.isfile(b):
+            try:
+                r = space.compare(io.load(a), io.load(b))
+                if not r.same_grid:
+                    self.space.set("warning", "A and B are not on the same voxel grid", [r.summary] + r.issues)
+            except Exception:
+                pass
 
     def validate(self):
         for p, n in ((self.a.path(), "A"), (self.b.path(), "B")):

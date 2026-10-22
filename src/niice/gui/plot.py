@@ -7,8 +7,8 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import io, plotting
-from .common import (PathEdit, ToolDialog, app, file_list_with_buttons, hint, run_dialog, show_modal,
-                     to_qimage)
+from .common import (PathEdit, ToolDialog, app, file_list_with_buttons, hint, preview_limit,
+                     run_dialog, show_modal, to_qimage)
 
 Qt = QtCore.Qt
 CMAPS = ["grey", "inferno", "viridis", "magma", "plasma", "hot", "jet", "coolwarm", "gray_r"]
@@ -142,6 +142,14 @@ class GifDialog(ToolDialog):
         paths = self.flist.paths()
         if not paths:
             return
+        for p in paths:  # a 4D preview reads every volume, a 3D one the whole image
+            reason = io.preview_skip_reason(p, preview_limit(), all_volumes=True)
+            if reason:
+                self.timer.stop()
+                self.frames = None
+                self.preview.setText(f"{os.path.basename(p)}:\n{reason}\n\nThe GIF can still be saved.")
+                self.preview_info.setText("")
+                return
         QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.frames = plotting.render_frames(paths, self.options(preview=True))
