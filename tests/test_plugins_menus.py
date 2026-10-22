@@ -80,6 +80,8 @@ def test_dolphin_install(tmp_path):
 
 def test_cli_rejects_wrong_selection(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(cli, "_notify_failure", lambda t, m: print("FAIL", t, m))
+    for name in ("a.nii.gz", "notes.txt"):
+        (tmp_path / name).write_bytes(b"")  # only existence is checked before these errors
     assert cli.run_tool("ops.subtract", [str(tmp_path / "a.nii.gz")] * 3) == 2
     assert "Too many" in capsys.readouterr().out
     assert cli.run_tool("info", [str(tmp_path / "notes.txt")]) == 2
