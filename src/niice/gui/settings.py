@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import os
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import plugins, settings
 from ..core import synthstrip
 from ..core.proc import open_in_file_manager
 from ..integration import menus
-from .common import app, error, hint, message, show_modal
+from . import theme
+from .common import app, apply_theme, error, hint, message, show_modal
 
 Qt = QtCore.Qt
 
@@ -80,6 +81,31 @@ class SettingsWindow(QtWidgets.QDialog):
     def _general_tab(self):
         w = QtWidgets.QWidget()
         form = QtWidgets.QFormLayout(w)
+        # --- appearance (previewed live; Cancel restores the saved look)
+        self.theme = QtWidgets.QComboBox()
+        for key in theme.THEMES:
+            self.theme.addItem({"system": "System (follow the desktop)", "light": "Light",
+                                "dark": "Dark"}[key], key)
+        self.theme.setCurrentIndex(max(0, self.theme.findData(self.s.get("theme", "system"))))
+        form.addRow("Theme", self.theme)
+        self.accent = self.s.get("accent", theme.DEFAULT_ACCENT)
+        swatches = QtWidgets.QHBoxLayout()
+        swatches.setSpacing(4)
+        self.swatch_buttons = []
+        for name, colour in theme.ACCENTS.items():
+            b = QtWidgets.QToolButton()
+            b.setToolTip(name)
+            b.setFixedSize(24, 24)
+            b.clicked.connect(lambda _=False, c=colour: self._set_accent(c))
+            swatches.addWidget(b)
+            self.swatch_buttons.append((b, colour))
+        custom = QtWidgets.QPushButton("Custom...")
+        custom.clicked.connect(self._pick_accent)
+        swatches.addWidget(custom)
+        swatches.addStretch(1)
+        form.addRow("Accent colour", swatches)
+        self.theme.currentIndexChanged.connect(lambda *_: self._preview())
+        self._paint_swatches()
         self.ext = QtWidgets.QComboBox()
         self.ext.addItems(["same", ".nii.gz", ".nii"])
         self.ext.setCurrentText(self.s.get("output_ext", "same"))
@@ -159,6 +185,30 @@ class SettingsWindow(QtWidgets.QDialog):
         lay.addWidget(uninstall, 0, Qt.AlignLeft)
         return w
 
+    # ------------------------------------------------------------------ appearance
+    def _paint_swatches(self):
+        for b, colour in self.swatch_buttons:
+            chosen = colour.lower() == self.accent.lower()
+            b.setStyleSheet(f"QToolButton {{ background: {colour}; border-radius: 12px; "
+                            f"border: {'3px solid palette(text)' if chosen else '1px solid palette(mid)'}; }}")
+
+    def _set_accent(self, colour):
+        self.accent = colour
+        self._preview()
+
+    def _pick_accent(self):
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.accent), self, "Accent colour")
+        if c.isValid():
+            self._set_accent(c.name())
+
+    def _preview(self):
+        apply_theme(theme_name=self.theme.currentData(), accent=self.accent)
+        self._paint_swatches()
+
+    def reject(self):
+        apply_theme()  # back to the saved look
+        super().reject()
+
     # ------------------------------------------------------------------ actions
     def _open_plugins(self):
         os.makedirs(settings.plugins_dir(), exist_ok=True)
@@ -210,6 +260,8 @@ class SettingsWindow(QtWidgets.QDialog):
 
     def save(self):
         self._sync_disabled()
+        self.s["theme"] = self.theme.currentData()
+        self.s["accent"] = self.accent
         self.s["output_ext"] = self.ext.currentText()
         self.s["open_folder_when_done"] = self.open_folder.isChecked()
         self.s["ants_threads"] = self.threads.value()

@@ -199,8 +199,9 @@ detected and transformed volume by volume (`-e 3`). Selecting an image together 
 `niice settings` or the **Settings…** menu entry:
 
 * **Tools** — tick/untick each tool (built-ins and plugins); shows missing requirements (e.g. ANTs).
-* **General** — output format (`same`/`.nii.gz`/`.nii`), open folder when done, default ANTs threads,
-  preview size limit, SynthStrip backend/image, Docker via pkexec.
+* **General** — appearance (theme *System*/*Light*/*Dark* and an accent colour: swatches or any colour
+  via *Custom…*, previewed live), output format (`same`/`.nii.gz`/`.nii`), open folder when done,
+  default ANTs threads, preview size limit, SynthStrip backend/image, Docker via pkexec.
 * **Plugins** — plugin folder, *Create example*, *Reload*, and load errors (a broken plugin never
   breaks the other tools).
 * **Context menu** — which file managers get the menu.

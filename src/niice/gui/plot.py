@@ -7,6 +7,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import io, plotting
+from . import theme
 from .common import (PathEdit, ToolDialog, app, file_list_with_buttons, hint, preview_limit,
                      run_dialog, show_modal, to_qimage)
 
@@ -276,6 +277,14 @@ class HistogramWindow(QtWidgets.QDialog):
         return self._cache[key]
 
     def redraw(self, *_):
+        import matplotlib
+        from . import theme
+        style = theme.matplotlib_style()
+        with matplotlib.rc_context(style):
+            self.fig.set_facecolor(style.get("figure.facecolor", "white"))
+            self._redraw()
+
+    def _redraw(self):
         mask = self.mask.currentData() or ""
         if mask == "__browse__":
             return
@@ -300,7 +309,8 @@ class HistogramWindow(QtWidgets.QDialog):
             bins = int(np.clip(len(edges) - 1, 10, 512))
         for f, d in zip(targets, data):
             d = d[(d >= lo) & (d <= hi)]
-            ax.hist(d, bins=bins, range=(lo, hi), histtype="stepfilled" if len(targets) == 1 else "step",
+            colour = {"color": theme.accent()} if len(targets) == 1 else {}
+            ax.hist(d, bins=bins, range=(lo, hi), histtype="stepfilled" if len(targets) == 1 else "step", **colour,
                     alpha=0.85 if len(targets) == 1 else 1, linewidth=1.5, density=self.density.isChecked(),
                     label=os.path.basename(f))
             rows.append((os.path.basename(f), plotting.describe(d)))

@@ -21,11 +21,11 @@ QDialog, QWidget { font-size: 10pt; }
 QLabel#title { font-size: 14pt; font-weight: 600; }
 QLabel#subtitle { color: palette(mid); }
 QLabel#hint { color: palette(mid); font-size: 9pt; }
-QLabel#ok { color: #2e7d32; }
-QLabel#error { color: #c62828; }
+QLabel#ok { color: @ok; }
+QLabel#error { color: @error; }
 QFrame#card { border: 1px solid palette(mid); border-radius: 8px; }
 QLabel#chip { border-radius: 6px; padding: 6px 10px; font-weight: 600; }
-QLabel#chip[active="true"] { background: #1565c0; color: white; }
+QLabel#chip[active="true"] { background: @accent; color: white; }
 QLabel#chip[active="false"] { background: palette(window); color: palette(mid);
                               border: 1px dashed palette(mid); }
 QPlainTextEdit#log { font-family: monospace; font-size: 9pt; }
@@ -38,9 +38,22 @@ def app() -> QtWidgets.QApplication:
         inst = QtWidgets.QApplication(sys.argv[:1])
         inst.setApplicationName("NiiCE")
         inst.setApplicationDisplayName("NiiCE")
-        inst.setWindowIcon(icon())
-        inst.setStyleSheet(STYLE)
+        apply_theme(inst)
     return inst
+
+
+def apply_theme(inst=None, theme_name=None, accent=None):
+    """Apply the theme from Settings (or the given one) to the running app."""
+    from . import theme
+    inst = inst or QtWidgets.QApplication.instance()
+    s = settings.load()
+    theme_name = theme_name or s.get("theme", "system")
+    accent = accent or s.get("accent", theme.DEFAULT_ACCENT)
+    # first pass sets the palette so ok/error colours can follow light/dark
+    theme.apply(inst, theme_name, accent, "")
+    css = STYLE.replace("@ok", theme.ok_color()).replace("@error", theme.error_color())
+    theme.apply(inst, theme_name, accent, css)
+    inst.setWindowIcon(icon())
 
 
 def icon() -> QtGui.QIcon:
@@ -48,7 +61,8 @@ def icon() -> QtGui.QIcon:
     pm.fill(Qt.transparent)
     p = QtGui.QPainter(pm)
     p.setRenderHint(QtGui.QPainter.Antialiasing)
-    p.setBrush(QtGui.QColor("#1565c0"))
+    from . import theme
+    p.setBrush(QtGui.QColor(theme.accent()))
     p.setPen(Qt.NoPen)
     p.drawRoundedRect(2, 2, 60, 60, 14, 14)
     p.setPen(QtGui.QColor("white"))
@@ -214,7 +228,8 @@ class RunPanel(QtWidgets.QWidget):
         self.bar.setRange(0, 1000)
         self.bar.setValue(1000 if ok else 0)
         self.status.setText(message)
-        self.status.setStyleSheet("color: #2e7d32;" if ok else "color: #c62828;")
+        from . import theme
+        self.status.setStyleSheet(f"color: {theme.ok_color() if ok else theme.error_color()};")
         if outputs:
             self._folder = os.path.dirname(os.path.abspath(outputs[0]))
             self.open_btn.setVisible(True)

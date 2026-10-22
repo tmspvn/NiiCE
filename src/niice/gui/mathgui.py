@@ -9,6 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import io, mathexpr, space
 from .. import settings
+from . import theme
 from .common import Banner, PathEdit, ToolDialog, ask, file_list_with_buttons, hint, run_dialog
 
 Qt = QtCore.Qt
@@ -29,7 +30,7 @@ print(...)       shows in the log
 import ...       works as usual (e.g. from scipy import stats)"""
 
 # Code block colours: always a dark panel so it reads as code in light and dark desktop themes
-CODE_BG, CODE_FG, GUTTER_BG, GUTTER_FG = "#1e2029", "#e6e6e6", "#272a35", "#7f8596"
+CODE_BG, CODE_FG, GUTTER_BG, GUTTER_FG = "#16181f", "#e6e6e6", "#20232c", "#7f8596"
 
 
 class CodeEdit(QtWidgets.QPlainTextEdit):
@@ -44,7 +45,7 @@ class CodeEdit(QtWidgets.QPlainTextEdit):
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.setStyleSheet(f"QPlainTextEdit {{ background: {CODE_BG}; color: {CODE_FG}; "
                            "selection-background-color: #3d5a80; selection-color: white; "
-                           "border: 1px solid #3a3f4f; border-radius: 6px; }")
+                           f"border: 1px solid {theme.accent()}; border-radius: 6px; }}")
         pal = self.palette()
         pal.setColor(QtGui.QPalette.PlaceholderText, QtGui.QColor(GUTTER_FG))
         self.setPalette(pal)
@@ -197,11 +198,11 @@ class MathDialog(ToolDialog):
                 msg += " - no result: only save(...) calls will write files"
             self._check_grids(used)
             self.check_label.setText(msg)
-            self.check_label.setStyleSheet("color: #2e7d32;")
+            self.check_label.setStyleSheet(f"color: {theme.ok_color()};")
             return True
         except mathexpr.ExprError as e:
             self.check_label.setText(str(e) if text.strip() else " ")
-            self.check_label.setStyleSheet("color: #c62828;")
+            self.check_label.setStyleSheet(f"color: {theme.error_color()};")
             return False
 
     def _check_grids(self, used):
