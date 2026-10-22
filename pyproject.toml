@@ -9,6 +9,8 @@ description = "NiiCE - NIfTI Context Extension: right-click tools for quick neur
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Tommaso Pavan" }]
+license = { text = "MIT" }
+urls = { Homepage = "https://github.com/tmspvn/NiiCE" }
 dependencies = [
     "numpy>=1.21",
     "nibabel>=4.0",

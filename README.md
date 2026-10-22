@@ -301,3 +301,19 @@ pytest
 
 The core (`src/niice/core`) has no GUI dependency and is unit-tested on small synthetic images;
 the GUI lives in `src/niice/gui`, one module per menu section.
+
+## License and citations
+
+NiiCE is released under the [MIT License](LICENSE).
+
+The tools it can call keep their own licences and should be cited when you use them:
+
+* **SynthStrip** — A Hoopes, JS Mora, AV Dalca, B Fischl, M Hoffmann. *SynthStrip: Skull-Stripping for
+  Any Brain Image.* NeuroImage 260, 2022. Weights © the SynthStrip authors (MIT / CC BY 4.0), downloaded
+  on first use; Python implementation by [nipreps-synthstrip](https://github.com/nipreps/synthstrip)
+  (Apache-2.0).
+* **ANTs** — BB Avants, NJ Tustison, G Song et al. *A reproducible evaluation of ANTs similarity
+  metric performance in brain image registration.* NeuroImage 54(3), 2011 (Apache-2.0).
+* GUI: [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/) (LGPL-3.0), installed separately
+  by pip.
+
