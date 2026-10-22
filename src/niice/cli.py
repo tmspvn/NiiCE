@@ -38,6 +38,20 @@ def _notify_failure(title: str, text: str) -> None:
         subprocess.run(["notify-send", f"NiiCE: {title}", text[:300]], check=False)
 
 
+def _hint(tb: str) -> str:
+    """Plain-language explanation for errors caused by the installation, not by NiiCE."""
+    if "GLIBCXX" in tb or "libstdc++" in tb:
+        return ("Qt could not load: NiiCE's Python environment uses a C++ library (libstdc++) that is too "
+                "old, which is common when it was built from Anaconda's Python. Reinstall with the system "
+                "Python: ./install.sh --uninstall && ./install.sh --python /usr/bin/python3")
+    if "No module named 'PySide6'" in tb:
+        return "Qt for Python (PySide6) is not installed in NiiCE's environment: run ./install.sh again."
+    if "xcb" in tb and "plugin" in tb:
+        return ("Qt could not start its window system plugin. On Ubuntu/Debian: "
+                "sudo apt install libxcb-cursor0")
+    return ""
+
+
 def run_tool(tool_id: str, files: list[str], collect: bool = False) -> int:
     if collect and files:
         from .integration.collect import collect as do_collect
@@ -77,7 +91,9 @@ def run_tool(tool_id: str, files: list[str], collect: bool = False) -> int:
     try:
         t.callable()(files)
     except Exception:
-        _notify_failure(f"{t.label} failed", traceback.format_exc())
+        tb = traceback.format_exc()
+        hint = _hint(tb)
+        _notify_failure(f"{t.label} failed", (hint + "\n\n" if hint else "") + tb)
         return 1
     return 0
 

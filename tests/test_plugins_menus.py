@@ -208,3 +208,10 @@ def test_empty_xdg_config_home_falls_back(monkeypatch, tmp_path):
     monkeypatch.delenv("NIICE_CONFIG_DIR", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", "")
     assert settings.config_dir() == os.path.join(os.path.expanduser("~/.config"), "niice")
+
+
+def test_hint_for_old_libstdcxx():
+    tb = ("ImportError: /home/u/anaconda3/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.29' not found "
+          "(required by .../shiboken6/libshiboken6.abi3.so.6.10)")
+    assert "--python /usr/bin/python3" in cli._hint(tb)
+    assert cli._hint("ZeroDivisionError") == ""
