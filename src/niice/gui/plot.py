@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import io, plotting
 from . import theme
-from .common import (PathEdit, ToolDialog, app, file_list_with_buttons, hint,
+from .common import (Dialog, PathEdit, ToolDialog, app, file_list_with_buttons, hint,
                      run_dialog, show_modal, to_qimage)
 
 Qt = QtCore.Qt
@@ -194,7 +194,7 @@ class GifDialog(ToolDialog):
 
 
 # --------------------------------------------------------------------------- histogram
-class HistogramWindow(QtWidgets.QDialog):
+class HistogramWindow(Dialog):
     def __init__(self, files, parent=None):
         super().__init__(parent)
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT

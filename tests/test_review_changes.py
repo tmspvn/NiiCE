@@ -162,3 +162,42 @@ def test_quick_subtract_order_and_error(qt, img, tmp_path, monkeypatch):
     monkeypatch.setattr(common.Toast, "failure", failure)
     gops.subtract([img, c])
     assert "Shapes differ" in seen["msg"] and "resample" in seen["msg"].lower()
+
+
+# OPS-17 (round 2): spaces, ranges, and Enter must not press 'All' or 'Run'
+def test_extract_roi_typing_variants_and_enter(qt, tmp_path):
+    from PySide6 import QtCore, QtWidgets
+    from PySide6.QtTest import QTest
+    from niice.gui import ops as gops
+    lab = np.zeros((6, 6, 6), np.int16)
+    lab[:2], lab[2:4], lab[4:] = 1, 17, 53
+    p = str(tmp_path / "atlas.nii.gz")
+    nib.save(nib.Nifti1Image(lab, np.eye(4)), p)
+    d = gops.ExtractRoiDialog([p])
+    d.show()
+    edit = [e for e in d.findChildren(QtWidgets.QLineEdit) if "tick" in e.placeholderText().lower()][0]
+    for typed, expected in (("17 53", [17.0, 53.0]), ("10-20", [17.0]), ("1, 53", [1.0, 53.0])):
+        edit.clear()
+        QTest.keyClicks(edit, typed)
+        QTest.keyClick(edit, QtCore.Qt.Key_Return)
+        pump(qt, 0.05)
+        assert d.chosen() == expected and d.isVisible() and not d.panel.running
+    assert d.selected.text() == "Selected: 1, 53  (2 labels)"
+
+
+def test_subtract_pop_up_has_no_swap(qt, img, tmp_path, monkeypatch):
+    from PySide6 import QtWidgets
+    from niice.gui import common, ops as gops
+    monkeypatch.setattr(common, "_popup_seconds", lambda: 0.2)
+    labels = []
+    real = common.Toast.show_corner
+
+    def spy(self):
+        labels.extend(b.text() for b in self.findChildren(QtWidgets.QPushButton))
+        real(self)
+
+    monkeypatch.setattr(common.Toast, "show_corner", spy)
+    b = str(tmp_path / "b.nii.gz")
+    nib.save(nib.Nifti1Image(np.ones((12, 14, 10), np.float32), np.diag([2, 2, 2, 1.0])), b)
+    gops.subtract([img, b])
+    assert sorted(labels) == ["Close", "Open folder"]

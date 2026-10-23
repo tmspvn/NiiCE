@@ -8,7 +8,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import io, space
-from .common import Banner, Report, Worker, app, hint, preview_limit, show_modal, to_qimage
+from .common import Banner, Dialog, Report, Worker, app, hint, preview_limit, show_modal, to_qimage
 
 Qt = QtCore.Qt
 
@@ -73,7 +73,7 @@ class SliceView(QtWidgets.QLabel):
             self.mousePressEvent(ev)
 
 
-class AlignmentWindow(QtWidgets.QDialog):
+class AlignmentWindow(Dialog):
     def __init__(self, files, parent=None):
         super().__init__(parent)
         self.files = list(files)

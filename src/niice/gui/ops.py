@@ -169,17 +169,20 @@ class ExtractRoiDialog(BatchDialog):
             info = hint(f"Could not list labels: {e}")
         lay.addWidget(info)
         filt = QtWidgets.QLineEdit()
-        filt.setPlaceholderText("Type label numbers to tick them, e.g. 17, 53")
+        filt.setPlaceholderText("Type labels to tick them: 17, 53  or  17 53  or a range 10-20")
         filt.textChanged.connect(self._tick)
         self._typed = set()  # labels ticked by typing, so they can be unticked when deleted
         lay.addWidget(filt)
         lay.addWidget(self.labels, 1)
+        self.selected = QtWidgets.QLabel("Selected: none")
+        self.selected.setWordWrap(True)
+        self.labels.itemChanged.connect(self._show_selected)
         row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.selected, 1)
         for name, state in (("All", Qt.Checked), ("None", Qt.Unchecked)):
             b = QtWidgets.QPushButton(name)
             b.clicked.connect(lambda _=False, s=state: self._set_all(s))
             row.addWidget(b)
-        row.addStretch(1)
         lay.addLayout(row)
         form = QtWidgets.QFormLayout()
         self.combine = QtWidgets.QCheckBox("Save all ticked labels in one mask")
@@ -190,8 +193,16 @@ class ExtractRoiDialog(BatchDialog):
 
     def _tick(self, text):
         """Tick the labels typed so far (live); untick ones that were typed and then deleted."""
-        wanted = []
+        wanted, ranges = [], []
         for t in text.replace(";", ",").replace(" ", ",").split(","):
+            t = t.strip()
+            if "-" in t[1:]:  # range such as 10-20
+                lo, hi = t[0] + t[1:].split("-", 1)[0], t[1:].split("-", 1)[1]
+                try:
+                    ranges.append((float(lo), float(hi)))
+                except ValueError:
+                    pass
+                continue
             try:
                 wanted.append(float(t))
             except ValueError:
@@ -201,7 +212,7 @@ class ExtractRoiDialog(BatchDialog):
         for i in range(self.labels.count()):
             it = self.labels.item(i)
             v = it.data(Qt.UserRole)
-            if any(abs(v - w) < 1e-4 for w in wanted):
+            if any(abs(v - w) < 1e-4 for w in wanted) or any(lo - 1e-4 <= v <= hi + 1e-4 for lo, hi in ranges):
                 now.add(v)
                 it.setCheckState(Qt.Checked)
                 first = first or it
@@ -210,6 +221,13 @@ class ExtractRoiDialog(BatchDialog):
         self._typed = now
         if first is not None:
             self.labels.scrollToItem(first)
+
+    def _show_selected(self, *_):
+        vals = self.chosen()
+        names = ", ".join(f"{int(v)}" if v == int(v) else f"{v:g}" for v in vals[:30])
+        more = f" ... (+{len(vals) - 30})" if len(vals) > 30 else ""
+        self.selected.setText(f"Selected: {names}{more}  ({len(vals)} label{'s' if len(vals) != 1 else ''})"
+                              if vals else "Selected: none")
 
     def _set_all(self, state):
         for i in range(self.labels.count()):
@@ -614,35 +632,18 @@ def resample(files):
 
 
 def subtract(files):
-    """Two images: compute first - second at once (in the order they were selected)."""
+    """Two images: compute first - second at once, in the order they were selected."""
     if len(files) != 2:
         return run_dialog(SubtractDialog, files)
-    order = {"a": files[0], "b": files[1], "out": difference_path(files[0])}
-    while True:
-        a, b, out = order["a"], order["b"], order["out"]
-        wanted = {}
+    a, b = files
+    out = difference_path(a)
 
-        def task(report, a=a, b=b, out=out):
-            ops.subtract(a, b, out)
-            return (f"Saved:\n{out}\n\ndifference = {os.path.basename(a)}  minus  {os.path.basename(b)}")
+    def task(report):
+        ops.subtract(a, b, out)
+        return f"Saved:\n{out}\n\ndifference = {os.path.basename(a)}  minus  {os.path.basename(b)}"
 
-        def swap(toast):
-            wanted["swap"] = True
-            toast.close()
-
-        def options(toast):
-            wanted["dialog"] = True
-            toast.close()
-
-        result = run_quick("Subtract", task, f"{os.path.basename(a)} - {os.path.basename(b)}...",
-                           buttons=[("Options...", options), ("Swap (B - A)", swap)])
-        if wanted.get("swap"):
-            # same output file, other order (it was written by us a moment ago)
-            order = {"a": b, "b": a, "out": out if result else difference_path(b)}
-            continue
-        if wanted.get("dialog"):
-            return run_dialog(SubtractDialog, [a, b])
-        return 0
+    run_quick("Subtract", task, f"{os.path.basename(a)} - {os.path.basename(b)}...")
+    return 0
 
 
 def skullstrip(files):

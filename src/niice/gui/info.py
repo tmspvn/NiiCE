@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..core import info as core
 from ..core import io, space
 from ..core.io import split_ext
-from .common import Banner, Report, Thumbs, Worker, app, hint, preview_limit, show_modal
+from .common import Banner, Dialog, Report, Thumbs, Worker, app, hint, preview_limit, show_modal
 
 Qt = QtCore.Qt
 DIFF_COLOR = QtGui.QColor(255, 193, 7, 90)
@@ -61,7 +61,7 @@ def _export_table(parent, t: QtWidgets.QTableWidget, default: str):
                 w.writerow([t.item(r, c).text() if t.item(r, c) else "" for c in range(t.columnCount())])
 
 
-class InfoWindow(QtWidgets.QDialog):
+class InfoWindow(Dialog):
     def __init__(self, path: str, parent=None):
         super().__init__(parent)
         self.path = path
@@ -149,7 +149,7 @@ class InfoWindow(QtWidgets.QDialog):
         self.stats_label.setText("")
 
 
-class CompareWindow(QtWidgets.QDialog):
+class CompareWindow(Dialog):
     def __init__(self, paths, parent=None):
         super().__init__(parent)
         self.paths = paths

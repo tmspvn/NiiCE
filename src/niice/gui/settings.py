@@ -10,12 +10,12 @@ from ..core import synthstrip
 from ..core.proc import open_path
 from ..integration import menus
 from . import theme
-from .common import app, apply_theme, error, hint, message, show_modal
+from .common import Dialog, app, apply_theme, error, hint, message, show_modal
 
 Qt = QtCore.Qt
 
 
-class SettingsWindow(QtWidgets.QDialog):
+class SettingsWindow(Dialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("NiiCE - Settings")

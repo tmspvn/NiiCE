@@ -244,7 +244,21 @@ class RunPanel(QtWidgets.QWidget):
                 self.open_file_btn.setVisible(True)
 
 
-class ToolDialog(QtWidgets.QDialog):
+class Dialog(QtWidgets.QDialog):
+    """Base for every NiiCE window: plain Enter/Return never presses a button.
+
+    (QDialog would otherwise click its default or first button, e.g. 'Close' or 'All', when Enter
+    is pressed in a text or number field.) Ctrl+Enter is handled by ToolDialog.
+    """
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Return, Qt.Key_Enter) and not ev.modifiers() & Qt.ControlModifier:
+            ev.accept()
+            return
+        super().keyPressEvent(ev)
+
+
+class ToolDialog(Dialog):
     """Base dialog: header, a body built by `build()`, and a RunPanel running `task()` in a thread.
 
     Subclasses implement build(layout), optionally validate() -> error string, and
