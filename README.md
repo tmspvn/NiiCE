@@ -5,6 +5,10 @@ Right-click a <code>.nii</code> / <code>.nii.gz</code> file and get quick neuroi
 
 ![NiiCE tools](docs/screenshots.png)
 
+NiiCE is the nicer evolution of [neuro-nautilus](https://github.com/tmspvn/neuro-nautilus), the
+context-menu extension I developed during my PhD. NiiCE repackages it with a new Python-based GUI
+and quality-of-life tweaks vibecoded with [Claude](https://claude.ai).
+
 ## Tools
 
 | Menu | What it does |
