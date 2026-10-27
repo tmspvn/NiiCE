@@ -9,6 +9,7 @@
 set -euo pipefail
 
 VENV="${NIICE_VENV:-$HOME/.venvs/niice}"
+PY_OPT=""
 BIN_DIR="$HOME/.local/bin"
 SYNTHSTRIP=1
 GPU=0
@@ -25,6 +26,7 @@ usage() {
 Usage: ./install.sh [options]
 
   --venv PATH        where to create the Python environment (default: $VENV)
+  --python PATH      Python to build the environment from (default: the system python3)
   --no-synthstrip    skip skull stripping support (no PyTorch, ~1 GB less)
   --gpu              install the CUDA build of PyTorch instead of the CPU-only one
   --no-menu          do not add the right-click menu
@@ -40,6 +42,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --venv) VENV="$2"; shift ;;
+        --python) PY_OPT="$2"; shift ;;
         --no-synthstrip) SYNTHSTRIP=0 ;;
         --gpu) GPU=1 ;;
         --no-menu) MENU=0 ;;
@@ -90,12 +93,30 @@ fi
 
 # --------------------------------------------------------------------------- 1. system packages
 bold "1/5  System packages"
-PY=""
-for cand in python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
-    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
-        PY="$(command -v "$cand")"; break
-    fi
-done
+# Which Python to build the environment from. Prefer the system Python: Anaconda/conda Pythons
+# load their own (often old) libstdc++, which breaks Qt (PySide6) with "GLIBCXX_... not found".
+py_ok() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; }
+is_conda() { "$1" -c 'import os, sys; sys.exit(not os.path.isdir(os.path.join(sys.base_prefix, "conda-meta")))' >/dev/null 2>&1; }
+pick_python() {
+    local cand path conda_fallback=""
+    for cand in /usr/bin/python3 /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.10 \
+                /usr/bin/python3.9 python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
+        path="$(command -v "$cand" 2>/dev/null)" || continue
+        py_ok "$path" || continue
+        if is_conda "$path"; then
+            conda_fallback="${conda_fallback:-$path}"
+            continue
+        fi
+        echo "$path"; return
+    done
+    echo "$conda_fallback"
+}
+if [[ -n "$PY_OPT" ]]; then
+    PY="$(command -v "$PY_OPT" 2>/dev/null)" || fail "--python $PY_OPT: not found"
+    py_ok "$PY" || fail "--python $PY_OPT: Python 3.9 or newer is needed"
+else
+    PY="$(pick_python)"
+fi
 have() { command -v "$1" >/dev/null 2>&1; }
 need=()
 if have apt-get; then
@@ -144,6 +165,10 @@ else
 fi
 [[ -n "$PY" ]] || fail "Python 3.9 or newer was not found. Install python3 and run this script again."
 info "Python: $PY ($("$PY" -c 'import platform; print(platform.python_version())'))"
+if is_conda "$PY"; then
+    warn "This is a conda/Anaconda Python. Its bundled libstdc++ is often too old for Qt."
+    warn "If the Qt test in step 2 fails, use a system Python:  ./install.sh --python /usr/bin/python3"
+fi
 
 # --------------------------------------------------------------------------- 2. environment
 bold "2/5  Python environment ($VENV)"
@@ -179,6 +204,27 @@ else
 fi
 "$VENV/bin/niice" --version >/dev/null || fail "NiiCE did not install correctly (see the messages above)."
 info "NiiCE $("$VENV/bin/niice" --version) installed"
+# Can Qt load? (catches library problems now instead of at the first right-click)
+if qt_err="$("$VPY" -c 'from PySide6 import QtWidgets' 2>&1)"; then
+    info "Qt (PySide6) loads fine"
+else
+    printf '%s\n' "$qt_err" | tail -n 3 | sed 's/^/    /'
+    if [[ "$qt_err" == *GLIBCXX* || "$qt_err" == *libstdc++* ]]; then
+        if is_conda "$PY"; then
+            fail "Qt cannot load because $PY (conda) brings an old libstdc++.
+  Fix one of these, then run ./install.sh again:
+   - use the system Python:   ./install.sh --uninstall && ./install.sh --python /usr/bin/python3
+     (first 'conda deactivate' if '(base)' shows in your prompt)
+   - or update conda's library: conda install -n base -c conda-forge \"libstdcxx-ng>=12\""
+        fi
+        fail "Qt cannot load: the system C++ library (libstdc++) is too old for this PySide6 build.
+  Update your Linux distribution, or try an older Qt: $VPY -m pip install \"PySide6<6.6\""
+    elif [[ "$qt_err" == *xcb* || "$qt_err" == *libEGL* || "$qt_err" == *libGL* ]]; then
+        fail "Qt cannot load a system graphics library. On Ubuntu/Debian: sudo apt install libxcb-cursor0 libegl1 libgl1"
+    else
+        fail "Qt (PySide6) cannot load; see the message above."
+    fi
+fi
 
 # --------------------------------------------------------------------------- 3. command
 bold "3/5  niice command"
@@ -207,6 +253,14 @@ if [[ $MENU -eq 0 ]]; then
     info "Skipped (--no-menu)"
 else
     "$VENV/bin/niice" install || warn "No supported file manager found (see the README for others)."
+    if have thunar && pgrep -x thunar >/dev/null 2>&1; then
+        if ask "Restart Thunar now so the menu appears (open Thunar windows will close)?"; then
+            thunar -q >/dev/null 2>&1 || true
+            info "Restarted. Right-click a .nii or .nii.gz file."
+        else
+            info "Later, run: thunar -q"
+        fi
+    fi
     if have nautilus && pgrep -x nautilus >/dev/null 2>&1; then
         if ask "Restart Nautilus now so the menu appears (open Files windows will close)?"; then
             nautilus -q >/dev/null 2>&1 || true

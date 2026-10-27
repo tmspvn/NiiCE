@@ -8,7 +8,9 @@ from PySide6 import QtCore, QtWidgets
 
 from ..core import io, ops, space, synthstrip
 from ..core.proc import run_streaming
-from .common import Banner, PathEdit, ToolDialog, ask, file_list_with_buttons, hint, run_dialog
+from .. import settings as user_settings
+from .common import (Banner, PathEdit, ToolDialog, app, ask, file_list_with_buttons, hint, run_dialog,
+                     run_quick)
 
 Qt = QtCore.Qt
 
@@ -167,16 +169,20 @@ class ExtractRoiDialog(BatchDialog):
             info = hint(f"Could not list labels: {e}")
         lay.addWidget(info)
         filt = QtWidgets.QLineEdit()
-        filt.setPlaceholderText("Type label numbers to tick, e.g. 17, 53  (Enter)")
-        filt.returnPressed.connect(lambda: self._tick(filt.text()))
+        filt.setPlaceholderText("Type labels to tick them: 17, 53  or  17 53  or a range 10-20")
+        filt.textChanged.connect(self._tick)
+        self._typed = set()  # labels ticked by typing, so they can be unticked when deleted
         lay.addWidget(filt)
         lay.addWidget(self.labels, 1)
+        self.selected = QtWidgets.QLabel("Selected: none")
+        self.selected.setWordWrap(True)
+        self.labels.itemChanged.connect(self._show_selected)
         row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.selected, 1)
         for name, state in (("All", Qt.Checked), ("None", Qt.Unchecked)):
             b = QtWidgets.QPushButton(name)
             b.clicked.connect(lambda _=False, s=state: self._set_all(s))
             row.addWidget(b)
-        row.addStretch(1)
         lay.addLayout(row)
         form = QtWidgets.QFormLayout()
         self.combine = QtWidgets.QCheckBox("Save all ticked labels in one mask")
@@ -186,17 +192,42 @@ class ExtractRoiDialog(BatchDialog):
         lay.addLayout(form)
 
     def _tick(self, text):
-        wanted = []
-        for t in text.replace(";", ",").split(","):
+        """Tick the labels typed so far (live); untick ones that were typed and then deleted."""
+        wanted, ranges = [], []
+        for t in text.replace(";", ",").replace(" ", ",").split(","):
+            t = t.strip()
+            if "-" in t[1:]:  # range such as 10-20
+                lo, hi = t[0] + t[1:].split("-", 1)[0], t[1:].split("-", 1)[1]
+                try:
+                    ranges.append((float(lo), float(hi)))
+                except ValueError:
+                    pass
+                continue
             try:
                 wanted.append(float(t))
             except ValueError:
                 pass
+        now = set()
+        first = None
         for i in range(self.labels.count()):
             it = self.labels.item(i)
-            if any(abs(it.data(Qt.UserRole) - w) < 1e-4 for w in wanted):
+            v = it.data(Qt.UserRole)
+            if any(abs(v - w) < 1e-4 for w in wanted) or any(lo - 1e-4 <= v <= hi + 1e-4 for lo, hi in ranges):
+                now.add(v)
                 it.setCheckState(Qt.Checked)
-                self.labels.scrollToItem(it)
+                first = first or it
+            elif v in self._typed:
+                it.setCheckState(Qt.Unchecked)
+        self._typed = now
+        if first is not None:
+            self.labels.scrollToItem(first)
+
+    def _show_selected(self, *_):
+        vals = self.chosen()
+        names = ", ".join(f"{int(v)}" if v == int(v) else f"{v:g}" for v in vals[:30])
+        more = f" ... (+{len(vals) - 30})" if len(vals) > 30 else ""
+        self.selected.setText(f"Selected: {names}{more}  ({len(vals)} label{'s' if len(vals) != 1 else ''})"
+                              if vals else "Selected: none")
 
     def _set_all(self, state):
         for i in range(self.labels.count()):
@@ -236,11 +267,14 @@ class ExtractVolumeDialog(BatchDialog):
             self.nvol = io.n_volumes(io.load(self.files[0]))
         except Exception:
             self.nvol = 1
-        lay.addWidget(hint(f"{os.path.basename(self.files[0])} has {self.nvol} volumes (0-{self.nvol - 1})."))
         form = QtWidgets.QFormLayout()
+        form.addRow("", hint("Examples:  0   |   0, 5, 10-20   |   -1 (= last volume)"))
         self.idx = QtWidgets.QLineEdit("0")
-        self.idx.setPlaceholderText("e.g. 0   or   0, 5, 10-20   or   -1 (last)")
-        form.addRow("Volumes", self.idx)
+        count = QtWidgets.QLabel(f"of <b>{self.nvol}</b> volumes (0-{self.nvol - 1})")
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.idx, 1)
+        row.addWidget(count)
+        form.addRow("Volumes", row)
         self.separate = QtWidgets.QCheckBox("One file per volume (otherwise one 4D file)")
         form.addRow(self.separate)
         self.preview = hint("")
@@ -406,7 +440,7 @@ class SubtractDialog(ToolDialog):
         a, b = self.a.path(), self.b.path()
         self.formula.setText(f"{io.stem(a) or 'A'}  -  {io.stem(b) or 'B'}")
         if a and b:
-            self.out.setPath(self.out_name(a, f"_minus_{io.stem(b)}"))
+            self.out.setPath(difference_path(a))
         self.space.set("info", "")
         if os.path.isfile(a) and os.path.isfile(b):
             try:
@@ -506,37 +540,79 @@ class SkullstripDialog(BatchDialog):
         return super().task(report)
 
     def process(self, path, report):
+        i = self.flist.paths().index(path) + 1 if path in self.flist.paths() else 1
+        report.busy(f"Running SynthStrip on {os.path.basename(path)} ({i}/{self.flist.count()})...")
         out = self.out_name(path, self.suffix_edit.text())
         mask = io.out_path(path, "_brainmask", ext=self.settings.get("output_ext", "same")) \
             if self.mask.isChecked() else None
-        for attempt in range(2):
-            cmd = synthstrip.build_command(self.backend, self.exe, path, out, mask,
-                                           no_csf=self.nocsf.isChecked(), border=self.border.value(),
-                                           image=self.settings.get("synthstrip_image", synthstrip.DEFAULT_IMAGE),
-                                           pkexec=self.pkexec, threads=self.threads.value())
-            report.log("$ " + " ".join(cmd))
-            lines = []
+        outs, self.pkexec = strip_one(path, out, mask, self.backend, self.exe, self.settings, report,
+                                      no_csf=self.nocsf.isChecked(), border=self.border.value(),
+                                      threads=self.threads.value(), pkexec=self.pkexec)
+        return outs
 
-            def on_line(l):
-                lines.append(l)
-                report.log(l)
 
-            code = run_streaming(cmd, on_line, report.cancel_event)
-            if code == 0:
-                return [p for p in (out, mask) if p]
-            text = "\n".join(lines)
-            if attempt == 0 and self.backend == "docker" and not self.pkexec \
-                    and synthstrip.is_permission_error(text) and shutil.which("pkexec"):
-                report.log("Docker needs root: retrying with pkexec (you will be asked for your password).")
-                self.pkexec = True
-                continue
-            raise RuntimeError(f"SynthStrip failed (exit code {code}); see the log")
-        return []
+def strip_one(path, out, mask, backend, exe, s, report, no_csf=False, border=1.0, threads=None,
+              pkexec=False):
+    """Run SynthStrip on one image. Returns (written paths, whether pkexec ended up being used)."""
+    for attempt in range(2):
+        cmd = synthstrip.build_command(backend, exe, path, out, mask, no_csf=no_csf, border=border,
+                                       image=s.get("synthstrip_image", synthstrip.DEFAULT_IMAGE),
+                                       pkexec=pkexec, threads=threads)
+        report.log("$ " + " ".join(cmd))
+        lines = []
+
+        def on_line(line):
+            lines.append(line)
+            report.log(line)
+
+        code = run_streaming(cmd, on_line, report.cancel_event)
+        if code == 0:
+            return [p for p in (out, mask) if p], pkexec
+        text = "\n".join(lines)
+        if attempt == 0 and backend == "docker" and not pkexec \
+                and synthstrip.is_permission_error(text) and shutil.which("pkexec"):
+            report.log("Docker needs root: retrying with pkexec (you will be asked for your password).")
+            pkexec = True
+            continue
+        last = next((l for l in reversed(lines) if l.strip()), "")
+        raise RuntimeError(f"SynthStrip failed (exit code {code}): {last}")
+    return [], pkexec
+
+
+# --------------------------------------------------------------------------- quick runs
+def difference_path(a: str) -> str:
+    """difference.nii.gz next to A (never overwriting an existing file)."""
+    ext = user_settings.get("output_ext")
+    ext = ".nii.gz" if ext in (None, "same") else ext
+    return io.unique_path(os.path.join(os.path.dirname(os.path.abspath(a)), "difference" + ext))
+
+
+def _with_options(title, task, dialog_cls, files, running, extra=()):
+    """Run at once with default settings; the pop-up's 'Options...' opens the full dialog."""
+    wanted = {}
+
+    def options(toast):
+        wanted["dialog"] = True
+        toast.close()
+
+    run_quick(title, task, running, buttons=[("Options...", options), *extra])
+    if wanted.get("dialog"):
+        return run_dialog(dialog_cls, files)
+    return 0
 
 
 # --------------------------------------------------------------------------- entry points
 def binarise(files):
-    return run_dialog(BinariseDialog, files)
+    if len(files) != 1:
+        return run_dialog(BinariseDialog, files)
+    src = files[0]
+    s = user_settings.load()
+
+    def task(report):
+        out = io.out_path(src, "_mask", ext=s.get("output_ext", "same"))
+        return [ops.binarise(src, out, 0.0)]
+
+    return _with_options("Binarise", task, BinariseDialog, files, f"Binarising {os.path.basename(src)} (> 0)...")
 
 
 def threshold(files):
@@ -556,9 +632,48 @@ def resample(files):
 
 
 def subtract(files):
-    return run_dialog(SubtractDialog, files)
+    """Two images: compute first - second at once, in the order they were selected."""
+    if len(files) != 2:
+        return run_dialog(SubtractDialog, files)
+    a, b = files
+    out = difference_path(a)
+
+    def task(report):
+        ops.subtract(a, b, out)
+        return f"Saved:\n{out}\n\ndifference = {os.path.basename(a)}  minus  {os.path.basename(b)}"
+
+    run_quick("Subtract", task, f"{os.path.basename(a)} - {os.path.basename(b)}...")
+    return 0
 
 
 def skullstrip(files):
-    return run_dialog(SkullstripDialog, files)
+    """One image: skull strip at once with the default options (brain + brain mask)."""
+    if len(files) != 1:
+        return run_dialog(SkullstripDialog, files)
+    app()
+    src = files[0]
+    s = user_settings.load()
+    backend, exe = synthstrip.pick_backend(s.get("synthstrip_backend", "auto"))
+
+    def task(report):
+        if not backend:
+            raise RuntimeError(synthstrip.INSTALL_HELP)
+        if backend == "python" and not synthstrip.find_weights(False):
+            path = synthstrip.download_weights(
+                False, lambda f, m: report.progress(f, f"First use: {m}"), lambda: report.cancelled)
+            report.log(f"Downloaded and verified {path}")
+        report.busy(f"Running SynthStrip on {os.path.basename(src)} (about a minute on CPU)...")
+        out = io.out_path(src, "_brain", ext=s.get("output_ext", "same"))
+        mask = io.out_path(src, "_brainmask", ext=s.get("output_ext", "same"))
+        outs, _ = strip_one(src, out, mask, backend, exe, s, report, threads=s.get("ants_threads", 3),
+                            pkexec=bool(s.get("docker_pkexec")))
+        return outs
+
+    if backend == "python" and not synthstrip.find_weights(False):
+        if not ask("Download model weights?",
+                   f"SynthStrip needs its trained model ({synthstrip.WEIGHTS[False][0]}, about "
+                   f"{synthstrip.WEIGHTS_MB} MB). Download it now from the official SynthStrip website?"):
+            return 0
+    return _with_options("Skull strip (SynthStrip)", task, SkullstripDialog, files,
+                         f"Running SynthStrip on {os.path.basename(src)}...")
 

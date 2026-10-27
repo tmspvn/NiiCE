@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -57,21 +58,49 @@ def _terminate(proc: subprocess.Popen) -> None:
         pass
 
 
-def open_in_file_manager(path: str) -> None:
+def _clean_env() -> dict:
+    """Environment for launching desktop programs: without the Qt/library paths NiiCE's own Qt
+    (PySide6) may have set, which can confuse other applications."""
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith(("QT_", "QML", "PYSIDE")) or key in ("LD_LIBRARY_PATH", "PYTHONHOME", "PYTHONPATH"):
+            env.pop(key)
+    return env
+
+
+def open_path(path: str) -> bool:
+    """Open a file or folder with the desktop's default application. Returns False if it failed."""
+    path = os.path.abspath(path)
+    try:  # Qt knows the desktop's preferred way (portals on Flatpak/Snap/Wayland)
+        from PySide6 import QtCore, QtGui, QtWidgets
+        if QtWidgets.QApplication.instance() is not None:
+            if QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path)):
+                return True
+    except Exception:
+        pass
+    if sys.platform.startswith("win"):
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]
+            return True
+        except OSError:
+            return False
+    commands = [["open", path]] if sys.platform == "darwin" else [["xdg-open", path], ["gio", "open", path]]
+    for cmd in commands:
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.Popen(cmd, env=_clean_env(), start_new_session=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except OSError:
+                continue
+    return False
+
+
+def open_in_file_manager(path: str) -> bool:
     """Open a folder (or the folder containing a file) in the system file manager."""
     folder = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
-    if sys.platform.startswith("win"):
-        os.startfile(folder)  # type: ignore[attr-defined]
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", folder])
-    else:
-        subprocess.Popen(["xdg-open", folder])
+    return open_path(folder)
 
 
-def open_file(path: str) -> None:
-    if sys.platform.startswith("win"):
-        os.startfile(path)  # type: ignore[attr-defined]
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", path])
-    else:
-        subprocess.Popen(["xdg-open", path])
+def open_file(path: str) -> bool:
+    return open_path(path)

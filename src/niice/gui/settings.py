@@ -7,15 +7,15 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import plugins, settings
 from ..core import synthstrip
-from ..core.proc import open_in_file_manager
+from ..core.proc import open_path
 from ..integration import menus
 from . import theme
-from .common import app, apply_theme, error, hint, message, show_modal
+from .common import Dialog, app, apply_theme, error, hint, message, show_modal
 
 Qt = QtCore.Qt
 
 
-class SettingsWindow(QtWidgets.QDialog):
+class SettingsWindow(Dialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("NiiCE - Settings")
@@ -141,6 +141,15 @@ class SettingsWindow(QtWidgets.QDialog):
         self.pkexec = QtWidgets.QCheckBox("Run Docker through pkexec (asks for the password graphically)")
         self.pkexec.setChecked(bool(self.s.get("docker_pkexec")))
         form.addRow(self.pkexec)
+        self.popup = QtWidgets.QSpinBox()
+        self.popup.setRange(0, 120)
+        self.popup.setSuffix(" s")
+        self.popup.setSpecialValueText("until closed")
+        self.popup.setValue(int(self.s.get("popup_seconds", 6)))
+        form.addRow("Result pop-up stays", self.popup)
+        self.remember = QtWidgets.QCheckBox("Math: remember the last code")
+        self.remember.setChecked(bool(self.s.get("math_remember_code")))
+        form.addRow(self.remember)
         return w
 
     def _plugins_tab(self):
@@ -149,23 +158,61 @@ class SettingsWindow(QtWidgets.QDialog):
         lay.addWidget(QtWidgets.QLabel(f"Plugin folder: <code>{settings.plugins_dir()}</code>"))
         lay.addWidget(hint(
             "Every .py file in this folder is loaded. A plugin is a decorated Python function; "
-            "NiiCE builds the dialog for simple image filters. Use 'Create example' to start, "
-            "edit the file, then 'Reload'. Installed packages can also add tools through the "
+            "NiiCE builds the dialog for simple image filters. 'New plugin' creates an empty "
+            "template and opens it; edit it, then press 'Reload' (this also updates the "
+            "right-click menu). Installed packages can also add tools through the "
             "'niice.plugins' entry point."))
         row = QtWidgets.QHBoxLayout()
-        for name, fn in (("Open folder", self._open_plugins), ("Create example", self._example),
-                         ("Reload", self._reload)):
+        for name, fn in (("Open folder", self._open_plugins), ("New plugin", self._new_plugin),
+                         ("Add Gaussian-smooth example", self._example), ("Reload", self._reload)):
             b = QtWidgets.QPushButton(name)
+            b.setAutoDefault(False)
             b.clicked.connect(fn)
             row.addWidget(b)
         row.addStretch(1)
         lay.addLayout(row)
+        lay.addWidget(QtWidgets.QLabel("<b>Loaded plugins</b>"))
+        self.plugin_list = QtWidgets.QTreeWidget()
+        self.plugin_list.setHeaderLabels(["Plugin", "Tools it adds", "Status"])
+        self.plugin_list.setColumnWidth(0, 200)
+        self.plugin_list.setColumnWidth(1, 330)
+        self.plugin_list.itemDoubleClicked.connect(self._edit_plugin)
+        lay.addWidget(self.plugin_list, 1)
+        lay.addWidget(hint("Double-click a plugin file to edit it."))
         lay.addWidget(QtWidgets.QLabel("<b>Load errors</b>"))
         self.errors = QtWidgets.QPlainTextEdit(objectName="log")
         self.errors.setReadOnly(True)
-        lay.addWidget(self.errors, 1)
+        self.errors.setMaximumHeight(120)
+        lay.addWidget(self.errors)
         self._show_errors()
+        self._fill_plugins()
         return w
+
+    def _fill_plugins(self):
+        self.plugin_list.clear()
+        folder = settings.plugins_dir()
+        files = sorted(f for f in os.listdir(folder) if f.endswith(".py") and not f.startswith("_")) \
+            if os.path.isdir(folder) else []
+        errors = {src: tb for src, tb in plugins.LOAD_ERRORS}
+        by_source = {}
+        for t in plugins.all_tools():
+            if t.source != "builtin":
+                by_source.setdefault(t.source, []).append(t.menu)
+        for f in files:
+            tools = by_source.pop(f"plugin file {f}", [])
+            status = "error (see below)" if f in errors else ("loaded" if tools else "loaded, adds no tools")
+            it = QtWidgets.QTreeWidgetItem([f, ", ".join(tools), status])
+            it.setData(0, Qt.UserRole, os.path.join(folder, f))
+            self.plugin_list.addTopLevelItem(it)
+        for src, tools in by_source.items():  # installed packages (entry points)
+            self.plugin_list.addTopLevelItem(QtWidgets.QTreeWidgetItem([src, ", ".join(tools), "loaded"]))
+        if not self.plugin_list.topLevelItemCount():
+            self.plugin_list.addTopLevelItem(QtWidgets.QTreeWidgetItem(["(none yet)", "", ""]))
+
+    def _edit_plugin(self, item, _col=0):
+        path = item.data(0, Qt.UserRole)
+        if path and not open_path(path):
+            message("Plugin file", f"Open this file in a text editor:\n{path}", self)
 
     def _menu_tab(self):
         w = QtWidgets.QWidget()
@@ -211,8 +258,18 @@ class SettingsWindow(QtWidgets.QDialog):
 
     # ------------------------------------------------------------------ actions
     def _open_plugins(self):
-        os.makedirs(settings.plugins_dir(), exist_ok=True)
-        open_in_file_manager(settings.plugins_dir())
+        folder = settings.plugins_dir()
+        os.makedirs(folder, exist_ok=True)
+        if not open_path(folder):
+            message("Plugin folder", f"Could not open a file manager. The folder is:\n{folder}", self)
+
+    def _new_plugin(self):
+        path = plugins.new_plugin_file(settings.plugins_dir())
+        self._reload()
+        opened = open_path(path)
+        message("New plugin", f"Created {path}\n\nIt adds 'Operations/{os.path.basename(path)[:-3].replace('_', ' ').capitalize()}' "
+                "to the right-click menu. Edit the file"
+                + ("" if opened else " (open it in a text editor)") + ", then press Reload.", self)
 
     def _example(self):
         os.makedirs(settings.plugins_dir(), exist_ok=True)
@@ -226,10 +283,18 @@ class SettingsWindow(QtWidgets.QDialog):
         self._reload()
 
     def _reload(self):
+        """Re-read the plugins, refresh the lists, and update the installed right-click menus."""
         self._sync_disabled()
         plugins.load_all(force=True)
         self._fill_tree()
         self._show_errors()
+        self._fill_plugins()
+        installed = self.s.get("integrations", [])
+        if installed:
+            try:
+                menus.install(installed, plugins.enabled_tools(self.s))
+            except Exception as e:  # the lists are still right; only the menu could not be written
+                self.errors.appendPlainText(f"Menu update failed: {e}")
 
     def _show_errors(self):
         self.errors.setPlainText("\n\n".join(f"[{src}]\n{tb}" for src, tb in plugins.LOAD_ERRORS) or "none")
@@ -269,6 +334,8 @@ class SettingsWindow(QtWidgets.QDialog):
         self.s["synthstrip_backend"] = self.backend.currentData()
         self.s["synthstrip_image"] = self.image.text().strip() or synthstrip.DEFAULT_IMAGE
         self.s["docker_pkexec"] = self.pkexec.isChecked()
+        self.s["popup_seconds"] = self.popup.value()
+        self.s["math_remember_code"] = self.remember.isChecked()
         chosen = [n for n, c in self.targets.items() if c.isChecked()]
         removed = [n for n in self.s.get("integrations", []) if n not in chosen]
         self.s["integrations"] = chosen

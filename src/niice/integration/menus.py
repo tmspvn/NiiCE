@@ -3,7 +3,8 @@
 Linux:   Nautilus (GNOME Files) and Nemo (Cinnamon): a top-level "NiiCE" menu through a small
          nautilus-python / nemo-python extension when that plugin is installed (package
          python3-nautilus / python-nemo), otherwise Scripts > NiiCE. Caja (MATE): Scripts > NiiCE.
-         Dolphin (KDE): service menu.
+         Dolphin (KDE): service menu. Thunar (XFCE): custom actions in ~/.config/Thunar/uca.xml,
+         grouped in a NiiCE submenu on Thunar >= 4.17.
 Windows: Explorer cascading menu for .nii and .gz files (current user, no admin rights).
 macOS:   not automated; see README (Automator Quick Action calling `niice run <tool> "$@"`).
 
@@ -57,6 +58,7 @@ def targets() -> dict[str, tuple[str, bool]]:
     for name, (label, _, exe) in _LINUX_SCRIPT_DIRS.items():
         out[name] = (label, shutil.which(exe) is not None)
     out["dolphin"] = ("Dolphin (KDE)", shutil.which("dolphin") is not None)
+    out["thunar"] = ("Thunar (XFCE)", shutil.which("thunar") is not None)
     return out
 
 
@@ -93,6 +95,8 @@ def install(names: Sequence[str], tools, use_extension=None) -> list[str]:
                                         f"'sudo apt install {pkg}', then run 'niice install' again)")
         elif name == "dolphin":
             _install_dolphin(tools)
+        elif name == "thunar":
+            install_notes[name] = _install_thunar(tools)
         elif name == "explorer":
             from . import windows
             windows.install(tools, python_exe(gui=True))
@@ -112,6 +116,8 @@ def uninstall(names: Sequence[str]) -> None:
                 p = os.path.join(os.path.expanduser(d), "niice.desktop")
                 if os.path.exists(p):
                     os.remove(p)
+        elif name == "thunar":
+            _remove_thunar()
         elif name == "explorer":
             from . import windows
             windows.uninstall()
@@ -172,6 +178,11 @@ TOOLS = {tools!r}  # (tool id, menu path)
 NIFTI = (".nii", ".nii.gz")
 
 
+def _is_nifti_name(path):  # also copies such as "scan.nii (copy).gz"
+    low = path.rsplit("/", 1)[-1].lower()
+    return low.endswith(NIFTI) or (".nii" in low and low.endswith(".gz"))
+
+
 def _paths(files):
     out = []
     for f in files:
@@ -185,7 +196,7 @@ def _paths(files):
 class NiiCEMenu(GObject.GObject, {module}.MenuProvider):
     def get_file_items(self, *args):  # (files) in Nautilus 4, (window, files) before
         paths = _paths(args[-1])
-        if not any(p.lower().endswith(NIFTI) for p in paths):
+        if not any(_is_nifti_name(p) for p in paths):
             return []
         top = {module}.MenuItem(name="NiiCE::menu", label="NiiCE", tip="NIfTI tools")
         root = {module}.Menu()
@@ -239,6 +250,100 @@ def _remove_extension(name: str) -> None:
         os.remove(_extension_path(name))
 
 
+# --------------------------------------------------------------------------- Thunar (XFCE)
+THUNAR_ID_PREFIX = "niice-"
+NIFTI_PATTERNS = "*.nii;*.nii.gz;*.nii*.gz;*.NII;*.NII.GZ"
+
+
+def _thunar_uca_path() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "Thunar", "uca.xml")
+
+
+def thunar_version():
+    """(major, minor) of the installed Thunar, or None if unknown."""
+    import re
+    try:
+        out = subprocess.run(["thunar", "--version"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"(\d+)\.(\d+)", out)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _load_uca(path: str):
+    import xml.etree.ElementTree as ET
+    if os.path.exists(path):
+        try:
+            return ET.parse(path).getroot()
+        except ET.ParseError as exc:
+            raise RuntimeError(f"{path} is not valid XML ({exc}); fix or move it, then install again")
+    return ET.Element("actions")
+
+
+def _write_uca(path: str, root) -> None:
+    import xml.etree.ElementTree as ET
+    if hasattr(ET, "indent"):
+        ET.indent(root, space="\t")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".niice-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:  # same header Thunar itself writes
+        fh.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        fh.write(ET.tostring(root, encoding="unicode") + "\n")
+    os.replace(tmp, path)
+
+
+def _strip_niice(root) -> None:
+    for action in list(root.findall("action")):
+        uid = action.findtext("unique-id") or ""
+        if uid.startswith(THUNAR_ID_PREFIX):
+            root.remove(action)
+
+
+def _install_thunar(tools, submenus=None) -> str:
+    """Add one custom action per tool; the user's own actions are kept as they are."""
+    import xml.etree.ElementTree as ET
+    path = _thunar_uca_path()
+    if submenus is None:
+        v = thunar_version()
+        submenus = v is None or v >= (4, 17)  # custom-action submenus exist since Thunar 4.17
+    if os.path.exists(path) and not os.path.exists(path + ".niice-backup"):
+        shutil.copy2(path, path + ".niice-backup")  # one-time backup of the user's file
+    root = _load_uca(path)
+    _strip_niice(root)
+    ordered = [t for t in tools if t.id != "settings"] + [t for t in tools if t.id == "settings"]
+    for t in ordered:
+        parts = t.menu.split("/")
+        label = parts[-1] + ("..." if t.id == "settings" else "")
+        a = ET.SubElement(root, "action")
+        ET.SubElement(a, "icon").text = "applications-science"
+        if submenus:
+            ET.SubElement(a, "name").text = label
+            ET.SubElement(a, "submenu").text = "/".join(["NiiCE"] + parts[:-1])
+        else:
+            ET.SubElement(a, "name").text = ": ".join(["NiiCE"] + parts[:-1] + [label])
+            ET.SubElement(a, "submenu").text = ""
+        ET.SubElement(a, "unique-id").text = THUNAR_ID_PREFIX + t.id
+        ET.SubElement(a, "command").text = f'"{python_exe()}" -m niice run {t.id} %F'
+        ET.SubElement(a, "description").text = t.description or t.menu
+        ET.SubElement(a, "range").text = ""
+        ET.SubElement(a, "patterns").text = NIFTI_PATTERNS
+        for kind in ("audio-files", "image-files", "other-files", "text-files", "video-files"):
+            ET.SubElement(a, kind)
+    _write_uca(path, root)
+    return ("custom actions in a NiiCE submenu" if submenus
+            else "custom actions named 'NiiCE: ...' (Thunar < 4.17 has no submenus)")
+
+
+def _remove_thunar() -> None:
+    path = _thunar_uca_path()
+    if not os.path.exists(path):
+        return
+    root = _load_uca(path)
+    _strip_niice(root)
+    _write_uca(path, root)
+
+
 # --------------------------------------------------------------------------- Dolphin
 def _install_dolphin(tools) -> None:
     folder = os.path.expanduser(_DOLPHIN_DIRS[0])
@@ -271,6 +376,7 @@ MIME_XML = """<?xml version="1.0" encoding="UTF-8"?>
     <comment>Compressed NIfTI image</comment>
     <sub-class-of type="application/gzip"/>
     <glob pattern="*.nii.gz" weight="60"/>
+    <glob pattern="*.nii*.gz" weight="55"/>
   </mime-type>
 </mime-info>
 """

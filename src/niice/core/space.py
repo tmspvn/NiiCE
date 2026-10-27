@@ -242,6 +242,9 @@ def composite(ref2d, mov2d, mode: str = "overlay", alpha: float = 0.5, tile: int
               ref_fov=None, mov_fov=None) -> np.ndarray:
     """RGB (H, W, 3) float 0..1 picture of two aligned slices.
 
+    alpha (0..1) balances the two images: 0 shows only the reference, 1 only the moving image,
+    0.5 both at full strength (overlay, contour) or an equal mix (blend). Weights:
+    w_ref = min(1, 2 (1 - alpha)), w_mov = min(1, 2 alpha).
     overlay:  reference in magenta (red + blue), moving in green; where both are bright the sum
               is grey/white, so misalignment shows as coloured fringes.
     checker:  alternating tiles of the two images; edges should continue across tile borders.
@@ -250,8 +253,9 @@ def composite(ref2d, mov2d, mode: str = "overlay", alpha: float = 0.5, tile: int
     The outlines of the two fields of view are drawn in magenta / green when given.
     """
     r, m = ref2d, mov2d
+    w_ref, w_mov = min(1.0, 2 * (1 - alpha)), min(1.0, 2 * alpha)
     if mode == "overlay":
-        rgb = np.stack([r, m, r], -1)
+        rgb = np.stack([w_ref * r, w_mov * m, w_ref * r], -1)
     elif mode == "checker":
         rows, cols = np.indices(r.shape)
         pick = ((rows // tile + cols // tile) % 2).astype(bool)
@@ -262,8 +266,8 @@ def composite(ref2d, mov2d, mode: str = "overlay", alpha: float = 0.5, tile: int
         mag = np.hypot(gx, gy)
         nz = mag[mag > 0]
         edge = mag > (np.percentile(nz, 85) if nz.size else 1)
-        rgb = np.stack([r, r, r], -1)
-        rgb[edge] = (1.0, 0.85, 0.0)
+        rgb = np.stack([w_ref * r] * 3, -1)
+        rgb[edge] = (1 - w_mov) * rgb[edge] + w_mov * np.array([1.0, 0.85, 0.0])
     else:
         g = (1 - alpha) * r + alpha * m
         rgb = np.stack([g, g, g], -1)

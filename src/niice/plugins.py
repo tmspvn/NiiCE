@@ -268,3 +268,42 @@ def smooth(data, img, fwhm_mm, mode):
     sigma = list(fwhm_mm / 2.3548 / zooms) + [0] * (data.ndim - 3)
     return gaussian_filter(data, sigma=sigma, mode=mode)
 '''
+
+
+PLUGIN_TEMPLATE = '''"""{title}: my NiiCE plugin.
+
+Edit this file, then in NiiCE Settings > Plugins press "Reload" (the right-click menu is updated too).
+More examples: https://github.com/tmspvn/NiiCE/tree/main/examples/plugins
+"""
+from niice.plugins import image_filter, Float
+
+
+@image_filter(
+    id="my.{name}",                 # unique id
+    menu="Operations/{title}",      # where it appears in the right-click menu
+    suffix="_{name}",               # added to the output file name
+    params={{"factor": Float(1.0, label="Factor", help="An example parameter")}},
+)
+def {name}(data, img, factor):
+    """What this tool does (shown in Settings > Tools)."""
+    # data: the image as a float32 numpy array (x, y, z[, t])
+    # img:  the nibabel image (img.affine, img.header)
+    # Return a numpy array on the same voxel grid (or a nibabel image).
+    return data * factor
+'''
+
+
+def new_plugin_file(folder: str) -> str:
+    """Write an empty plugin template (my_plugin.py, my_plugin_2.py, ...) and return its path."""
+    os.makedirs(folder, exist_ok=True)
+    i = 1
+    while True:
+        name = "my_plugin" if i == 1 else f"my_plugin_{i}"
+        path = os.path.join(folder, name + ".py")
+        if not os.path.exists(path):
+            break
+        i += 1
+    title = "My plugin" if i == 1 else f"My plugin {i}"
+    with open(path, "w") as f:
+        f.write(PLUGIN_TEMPLATE.format(name=name, title=title))
+    return path
